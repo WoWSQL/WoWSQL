@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Self-hosted version: no kubectl, helm, or AWS CLI needed
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    pkg-config \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Self-hosted environment
+ENV ENVIRONMENT=production
+ENV DEBUG=False
+ENV SELF_HOSTED=true
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

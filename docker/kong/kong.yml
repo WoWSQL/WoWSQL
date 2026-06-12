@@ -1,0 +1,146 @@
+# WoWSQL Self-Hosted — Kong API Gateway Configuration
+# All traffic enters through Kong at port 8080
+#
+# Authentication: Clients send JWT API keys directly as Bearer tokens.
+# PostgREST validates them using the shared JWT_SECRET.
+# No key-auth plugin needed — JWTs ARE the API keys.
+
+_format_version: "3.0"
+
+services:
+
+  # ─── PostgREST (REST API) ─────
+  - name: rest
+    url: http://rest:3100
+    routes:
+      - name: rest-route
+        paths:
+          - /rest/v1
+        strip_path: true
+        preserve_host: true
+
+  # ─── Auth ─────
+  - name: auth
+    url: http://auth:9000
+    routes:
+      - name: auth-route
+        paths:
+          - /auth/v1
+        strip_path: false
+        preserve_host: true
+
+  # ─── Storage ─────
+  - name: storage
+    url: http://storage:9100
+    routes:
+      - name: storage-route
+        paths:
+          - /storage/v1
+        strip_path: false
+        preserve_host: true
+
+  # ─── Realtime ─────
+  - name: realtime
+    url: http://realtime:9200
+    routes:
+      - name: realtime-route
+        paths:
+          - /realtime/v1
+        strip_path: false
+        preserve_host: true
+
+  # ─── Backend (Dashboard Auth + DB Ops) ─────
+  - name: backend
+    url: http://backend:8000
+    routes:
+      - name: backend-route
+        paths:
+          - /api/v1
+        strip_path: false
+        preserve_host: true
+
+  # ─── Health Check ─────
+  - name: health
+    url: http://backend:8000
+    routes:
+      - name: health-route
+        paths:
+          - /health
+        strip_path: false
+        methods:
+          - GET
+
+# ─── Global Plugins ─────────────────────────────────────
+
+plugins:
+  - name: cors
+    config:
+      origins:
+        - "http://localhost:3000"
+        - "http://127.0.0.1:3000"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      headers:
+        - Authorization
+        - Content-Type
+        - Prefer
+        - Accept
+        - apikey
+        - x-client-info
+        - X-Schema-Name
+        - X-Project-Slug
+        - Cookie
+      exposed_headers:
+        - X-Total-Count
+      max_age: 86400
+      credentials: true
+
+  - name: rate-limiting
+    config:
+      minute: 1000
+      hour: 10000
+      policy: local
+
+  - name: correlation-id
+    config:
+      header_name: X-Request-ID
+      echo_downstream: true
+      generator: uuid
+
+  # Transform apikey header into Authorization Bearer for PostgREST
+  # Also set X-Consumer-Username for the auth sidecar
+  - name: post-function
+    config:
+      access:
+        - |
+          local apikey = kong.request.get_header("apikey")
+          if apikey and not kong.request.get_header("Authorization") then
+            kong.service.request.set_header("Authorization", "Bearer " .. apikey)
+          end
+          if apikey then
+            local role = "anon"
+            local dot1 = apikey:find("%.")
+            if dot1 then
+              local dot2 = apikey:find("%.", dot1 + 1)
+              if dot2 then
+                local payload_b64 = apikey:sub(dot1 + 1, dot2 - 1)
+                payload_b64 = payload_b64:gsub("-", "+"):gsub("_", "/")
+                local pad = 4 - (#payload_b64 % 4)
+                if pad < 4 then payload_b64 = payload_b64 .. ("="):rep(pad) end
+                local ok, payload_str = pcall(ngx.decode_base64, payload_b64)
+                if ok and payload_str then
+                  local cjson = require("cjson.safe")
+                  local data = cjson.decode(payload_str)
+                  if data and data.role then
+                    role = data.role
+                  end
+                end
+              end
+            end
+            kong.service.request.set_header("X-Consumer-Username", role)
+          end

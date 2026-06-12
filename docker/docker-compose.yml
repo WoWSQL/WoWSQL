@@ -1,0 +1,208 @@
+version: "3.9"
+
+services:
+  # ─── PostgreSQL 18 ──────────────────────────────────────
+  db:
+    image: wowsql/postgres:18
+    container_name: wowsql-db
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    volumes:
+      - db-data:/var/lib/postgresql
+      - ./volumes/db/01-init-roles.sql:/docker-entrypoint-initdb.d/01-init-roles.sql:ro
+      - ./volumes/db/02-init-schemas.sql:/docker-entrypoint-initdb.d/02-init-schemas.sql:ro
+      - ./volumes/db/03-init-rls.sql:/docker-entrypoint-initdb.d/03-init-rls.sql:ro
+    networks:
+      - wowsql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ─── Redis ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: wowsql-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - wowsql
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── PostgREST (REST API from your tables) ─────────────
+  rest:
+    image: postgrest/postgrest:v12.2.0
+    container_name: wowsql-rest
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: "postgres://authenticator:${AUTHENTICATOR_PASSWORD:-wowsql_auth_pass}@db:5432/${POSTGRES_DB:-postgres}"
+      PGRST_DB_SCHEMAS: "public"
+      PGRST_DB_ANON_ROLE: "anon"
+      PGRST_JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
+      PGRST_JWT_SECRET_IS_BASE64: "false"
+      PGRST_SERVER_PORT: "3100"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - wowsql
+
+  # ─── WoWSQL Auth Service ────────────────────────────────
+  auth:
+    image: wowsql/auth:latest
+    container_name: wowsql-auth
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
+      JWT_SECRET: "${JWT_SECRET}"
+      PROJECT_ID: "default"
+      FRONTEND_URL: "${STUDIO_EXTERNAL_URL:-http://localhost:3000}"
+      SHARED_MODE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - wowsql
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9000/auth/v1/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ─── WoWSQL Storage Service ─────────────────────────────
+  storage:
+    image: wowsql/storage:latest
+    container_name: wowsql-storage
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
+      STORAGE_PATH: "/data/storage"
+      JWT_SECRET: "${JWT_SECRET}"
+    volumes:
+      - storage-data:/data/storage
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - wowsql
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9100/storage/v1/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ─── WoWSQL Realtime Service ────────────────────────────
+  realtime:
+    image: wowsql/realtime:latest
+    container_name: wowsql-realtime
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
+      REDIS_URL: "redis://redis:6379"
+      JWT_SECRET: "${JWT_SECRET}"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - wowsql
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9200/realtime/v1/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ─── Mini Backend (Dashboard Auth Only) ─────────────────
+  backend:
+    build: ../backend
+    container_name: wowsql-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
+      JWT_SECRET: "${JWT_SECRET}"
+      FRONTEND_URL: "${STUDIO_EXTERNAL_URL:-http://localhost:3000}"
+      COOKIE_SECURE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - wowsql
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── Kong API Gateway ───────────────────────────────────
+  kong:
+    image: kong:3.9
+    container_name: wowsql-kong
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8080}:8000"
+      - "${API_PORT_SSL:-8443}:8443"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: "/kong/kong.yml"
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_UNTRUSTED_LUA: "on"
+      KONG_JWT_SECRET: "${JWT_SECRET}"
+    volumes:
+      - ./kong/kong.yml:/kong/kong.yml:ro
+    depends_on:
+      - rest
+      - auth
+      - storage
+      - realtime
+      - backend
+    networks:
+      - wowsql
+
+  # ─── WoWSQL Studio (Dashboard) ─────────────────────────
+  studio:
+    build:
+      context: ../studio
+      args:
+        NEXT_PUBLIC_API_URL: "${API_EXTERNAL_URL:-http://localhost:8080}"
+        NEXT_PUBLIC_KONG_URL: "${API_EXTERNAL_URL:-http://localhost:8080}"
+        NEXT_PUBLIC_WS_URL: "${WS_EXTERNAL_URL:-ws://localhost:8080}"
+        NEXT_PUBLIC_DASHBOARD_URL: "${STUDIO_EXTERNAL_URL:-http://localhost:3000}"
+        NEXT_PUBLIC_SELF_HOSTED: "true"
+    container_name: wowsql-studio
+    restart: unless-stopped
+    ports:
+      - "${STUDIO_PORT:-3000}:3000"
+    depends_on:
+      - kong
+      - backend
+    networks:
+      - wowsql
+
+networks:
+  wowsql:
+    driver: bridge
+
+volumes:
+  db-data:
+  redis-data:
+  storage-data:

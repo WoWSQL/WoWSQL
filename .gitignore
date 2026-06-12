@@ -1,0 +1,66 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+studio/.next/
+studio/out/
+build/
+dist/
+
+# Environment files (contain secrets)
+.env
+.env.local
+.env.*.local
+docker/.env
+studio/.env.local
+studio/.env.production.local
+
+# Docker volumes (persistent data)
+docker/volumes/storage/*
+!docker/volumes/storage/.gitkeep
+
+# Package manager debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+.eggs/
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+
+# Misc
+*.log
+*.pid
+*.seed
+*.tsbuildinfo
