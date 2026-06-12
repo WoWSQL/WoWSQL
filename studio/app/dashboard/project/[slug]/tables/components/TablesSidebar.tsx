@@ -1,5 +1,6 @@
 import { Search, Plus, RefreshCw, Table as TableIcon, MoreVertical, Edit2, Copy, Settings, Shield, Trash2, Database, ChevronDown } from 'lucide-react'
 import { useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { Button } from '@/components/Button'
 import type { TableInfo, SchemaInfo } from '../types'
 
@@ -170,9 +171,9 @@ export function TablesSidebar(props: TablesSidebarProps) {
                     <MoreVertical className="w-4 h-4 text-zinc-600 dark:text-white/60" />
                   </button>
                 </div>
-                {showTableDropdown === table.name && dropdownPos && (
+                {showTableDropdown === table.name && dropdownPos && typeof document !== 'undefined' && createPortal(
                   <div
-                    className={`bg-white dark:bg-zinc-900 backdrop-blur-xl border border-zinc-200 dark:border-white/20 rounded-lg shadow-xl z-[200] overflow-hidden animate-fade-in ${dropdownPos.isUpwards ? '-translate-y-full' : ''}`}
+                    className={`bg-white dark:bg-zinc-900 backdrop-blur-xl border border-zinc-200 dark:border-white/20 rounded-lg shadow-xl z-[99999] overflow-hidden animate-fade-in ${dropdownPos.isUpwards ? '-translate-y-full' : ''}`}
                     data-table-menu
                     style={{ position: 'fixed', top: dropdownPos.top, left: Math.max(8, dropdownPos.left), width: '200px', maxWidth: 'calc(100vw - 16px)' }}
                   >
@@ -206,7 +207,8 @@ export function TablesSidebar(props: TablesSidebarProps) {
                       className="w-full px-4 py-2.5 text-sm text-left text-red-400 hover:bg-red-500/10 transition flex items-center gap-2">
                       <Trash2 className="w-4 h-4" /> Delete Table
                     </button>
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
             ))}
