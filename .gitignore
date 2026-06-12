@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Environment files (contain secrets)
+.env
+docker/.env
+
+# Docker volumes
+docker/volumes/storage/*
+!docker/volumes/storage/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
