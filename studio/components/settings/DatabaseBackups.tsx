@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   Camera,
   Database,
+  Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/Button'
 import api from '@/lib/api'
@@ -101,6 +102,8 @@ export default function DatabaseBackups({ slug }: DatabaseBackupsProps) {
   const [restoringId, setRestoringId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmRestore, setConfirmRestore] = useState<Backup | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<Backup | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadBackups = useCallback(async (silent = false) => {
@@ -160,6 +163,27 @@ export default function DatabaseBackups({ slug }: DatabaseBackupsProps) {
     }
   }
 
+  const handleDelete = async (backup: Backup) => {
+    setDeletingId(backup.id)
+    setError(null)
+    setConfirmDelete(null)
+    try {
+      await api.delete(`/api/v1/projects/${slug}/backups/${backup.id}`)
+      await loadBackups(true)
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to delete backup. Please try again.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  // Only one manual backup is allowed at a time — the user must delete the
+  // existing one before creating a new manual backup.
+  const hasManualBackup = backups.some(
+    (b) => b.backup_type === 'manual' && ['creating', 'available', 'restoring', 'restored', 'in_progress', 'completed'].includes(b.status)
+  )
+  const createDisabled = creating || hasManualBackup
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -170,21 +194,28 @@ export default function DatabaseBackups({ slug }: DatabaseBackupsProps) {
             Database Backups
           </h2>
           <p className="text-sm text-zinc-500 dark:text-white/60 mt-1">
-            Daily automatic backups with 7-day retention. Create manual snapshots and restore at any point.
+            Automatic daily backups are kept for 7 days, then deleted. You can keep <strong>one</strong> manual backup — delete it to create a new one.
           </p>
         </div>
-        <Button
-          onClick={handleCreateBackup}
-          disabled={creating}
-          className="bg-gradient-to-r from-blue-500 via-violet-500 to-pink-500 hover:opacity-90 text-white shadow-sm text-sm shrink-0"
-        >
-          {creating ? (
-            <Loader2 className="w-4 h-4 animate-spin mr-2" />
-          ) : (
-            <Plus className="w-4 h-4 mr-2" />
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <Button
+            onClick={handleCreateBackup}
+            disabled={createDisabled}
+            className="bg-gradient-to-r from-blue-500 via-violet-500 to-pink-500 hover:opacity-90 text-white shadow-sm text-sm shrink-0 disabled:opacity-50"
+          >
+            {creating ? (
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+            ) : (
+              <Plus className="w-4 h-4 mr-2" />
+            )}
+            {creating ? 'Creating backup...' : 'Create Backup'}
+          </Button>
+          {hasManualBackup && !creating && (
+            <p className="text-[11px] text-zinc-400 dark:text-white/40 max-w-[220px] text-right">
+              Delete your existing manual backup to create a new one.
+            </p>
           )}
-          {creating ? 'Creating backup...' : 'Create Backup'}
-        </Button>
+        </div>
       </div>
 
       {error && (
@@ -308,23 +339,43 @@ export default function DatabaseBackups({ slug }: DatabaseBackupsProps) {
                     </div>
                   </div>
 
-                  {/* Restore button — shown for completed (pg_dump) and available (EBS) */}
-                  {(backup.status === 'completed' || backup.status === 'available') && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={!canRestore}
-                      onClick={() => setConfirmRestore(backup)}
-                      className="border-zinc-200 dark:border-white/20 text-zinc-900 dark:text-white hover:bg-zinc-100 dark:bg-white/10 text-xs shrink-0"
-                    >
-                      {isCurrentlyRestoring ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                      ) : (
-                        <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-                      )}
-                      {isCurrentlyRestoring ? 'Restoring...' : 'Restore'}
-                    </Button>
-                  )}
+                  {/* Row actions */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Restore button — shown for completed (pg_dump) and available (EBS) */}
+                    {(backup.status === 'completed' || backup.status === 'available') && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!canRestore}
+                        onClick={() => setConfirmRestore(backup)}
+                        className="border-zinc-200 dark:border-white/20 text-zinc-900 dark:text-white hover:bg-zinc-100 dark:bg-white/10 text-xs shrink-0"
+                      >
+                        {isCurrentlyRestoring ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                        )}
+                        {isCurrentlyRestoring ? 'Restoring...' : 'Restore'}
+                      </Button>
+                    )}
+
+                    {/* Delete button — allowed unless the snapshot is mid-restore */}
+                    {backup.status !== 'restoring' && backup.status !== 'deleted' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={deletingId === backup.id}
+                        onClick={() => setConfirmDelete(backup)}
+                        className="border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 text-xs shrink-0"
+                      >
+                        {deletingId === backup.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             )
@@ -377,6 +428,58 @@ export default function DatabaseBackups({ slug }: DatabaseBackupsProps) {
               >
                 <RotateCcw className="w-4 h-4 mr-2" />
                 Restore Now
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="glass-card rounded-2xl p-6 max-w-md w-full border border-zinc-200 dark:border-white/20 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-red-500/15 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-zinc-900 dark:text-white">Delete Backup</h3>
+                <p className="text-xs text-zinc-500 dark:text-white/40">
+                  {confirmDelete.backup_type === 'manual' ? 'Manual' : 'Scheduled'} &middot;{' '}
+                  {confirmDelete.backup_engine === 'ebs' ? 'EBS Snapshot' : 'pg_dump'}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-zinc-500 dark:text-white/70 mb-2">
+              This will permanently delete the backup from:
+            </p>
+            <div className="rounded-lg bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 p-3 mb-4">
+              <p className="text-sm font-medium text-zinc-900 dark:text-white">{formatDate(confirmDelete.started_at)}</p>
+              <p className="text-xs text-zinc-500 dark:text-white/40 mt-0.5">
+                {formatBytes(confirmDelete.size_bytes, confirmDelete.size_gb)}
+              </p>
+            </div>
+            <div className="rounded-lg bg-red-500/5 border border-red-500/20 p-3 mb-5">
+              <p className="text-xs text-red-400 leading-relaxed">
+                ⚠️ This permanently removes the snapshot from AWS and cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setConfirmDelete(null)}
+                className="flex-1 border-zinc-200 dark:border-white/20 text-zinc-900 dark:text-white hover:bg-zinc-100 dark:bg-white/10"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => handleDelete(confirmDelete)}
+                className="flex-1 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete
               </Button>
             </div>
           </div>
