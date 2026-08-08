@@ -140,12 +140,14 @@ export function useTableData(slug: string, showToast: (msg: string, type?: Toast
   const searchParams = useSearchParams()
   /** Primitives — `searchParams` object identity changes most renders; using it in effect deps caused router/render storms. */
   const tableFromUrlParam = searchParams?.get('table') ?? null
+  const schemaFromUrlParam = searchParams?.get('schema') ?? null
   const searchParamsString = searchParams?.toString() ?? ''
   const [project, setProject] = useState<Project | null>(null)
   const [schemas, setSchemas] = useState<SchemaInfo[]>([])
-  const [selectedSchema, setSelectedSchema] = useState<string>('public')
+  const [selectedSchema, setSelectedSchema] = useState<string>(schemaFromUrlParam || 'public')
   const [tables, setTables] = useState<TableInfo[]>([])
-  const [selectedTable, setSelectedTable] = useState<string | null>(null)
+  /** Seed from ?table= so deep links are not wiped before tables finish loading. */
+  const [selectedTable, setSelectedTable] = useState<string | null>(tableFromUrlParam)
   const [tableData, setTableData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [loadingData, setLoadingData] = useState(false)
@@ -164,7 +166,9 @@ export function useTableData(slug: string, showToast: (msg: string, type?: Toast
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
 
   // Filters
+  /** Draft filters edited in the panel; only `appliedFilters` drive queries. */
   const [filters, setFilters] = useState<FilterItem[]>([])
+  const [appliedFilters, setAppliedFilters] = useState<FilterItem[]>([])
 
   /** While router.replace updates ?table=, searchParams can lag; don't let URL→state sync overwrite the clicked table. */
   const pendingTableFromClickRef = useRef<string | null>(null)
@@ -178,6 +182,8 @@ export function useTableData(slug: string, showToast: (msg: string, type?: Toast
   selectedTableRef.current = selectedTable
   const tableFromUrlParamRef = useRef(tableFromUrlParam)
   tableFromUrlParamRef.current = tableFromUrlParam
+  const schemaFromUrlParamRef = useRef(schemaFromUrlParam)
+  schemaFromUrlParamRef.current = schemaFromUrlParam
 
   const filteredTables = tables.filter(t =>
     t.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -269,7 +275,7 @@ export function useTableData(slug: string, showToast: (msg: string, type?: Toast
     setLoadingData(true)
     setError('')
     try {
-      const built = buildApiFilters(filters, filterColumnsRef.current)
+      const built = buildApiFilters(appliedFilters, filterColumnsRef.current)
       if (!built.ok) {
         const metaRes = await api.get(`/api/v1/db/tables/${tableName}`, {
           headers: { 'X-Project-Slug': slug },
@@ -352,22 +358,38 @@ export function useTableData(slug: string, showToast: (msg: string, type?: Toast
     } finally {
       if (loadAbortRef.current === ac) setLoadingData(false)
     }
-  }, [slug, pageSize, currentPage, sortColumn, sortDirection, filters, selectedSchema])
+  }, [slug, pageSize, currentPage, sortColumn, sortDirection, appliedFilters, selectedSchema])
+
+  // Apply deep-link ?schema= when navigating from Database → View Data.
+  useEffect(() => {
+    if (schemaFromUrlParam) {
+      setSelectedSchema(schemaFromUrlParam)
+    }
+  }, [schemaFromUrlParam])
+
+  const tablesNameKey = tables.map((t) => t.name).join('\0')
 
   // Sync selected table → ?table= (do not depend on full searchParamsString — avoids replace loops on reorder/encoding).
   useEffect(() => {
+    // Deep-link ?table= wins until state catches up — do not overwrite with a stale default selection.
+    if (tableFromUrlParam && selectedTable && tableFromUrlParam !== selectedTable) {
+      return
+    }
+
+    const params = new URLSearchParams(searchParamsStringRef.current)
+
     if (selectedTable && selectedTable !== tableFromUrlParam) {
-      const params = new URLSearchParams(searchParamsStringRef.current)
       params.set('table', selectedTable)
       router.replace(`?${params.toString()}`, { scroll: false })
     } else if (!selectedTable && tableFromUrlParam) {
-      const params = new URLSearchParams(searchParamsStringRef.current)
+      // Never strip deep-link ?table= while loading, or while that table exists in the list
+      // (URL→state sync still applying). Doing so caused defaults like ai_usage to win.
+      if (loading) return
+      if (tables.some((t) => t.name === tableFromUrlParam)) return
       params.delete('table')
       router.replace(`?${params.toString()}`, { scroll: false })
     }
-  }, [selectedTable, tableFromUrlParam, router])
-
-  const tablesNameKey = tables.map((t) => t.name).join('\0')
+  }, [selectedTable, tableFromUrlParam, router, loading, tablesNameKey, tables])
 
   // URL → state only when ?table= actually changes or initial deep link; never overwrite a fresh sidebar pick while URL lags.
   useEffect(() => {
@@ -416,6 +438,8 @@ export function useTableData(slug: string, showToast: (msg: string, type?: Toast
   }, [loadTables, loadTableData, selectedTable])
 
   const initialLoadDone = useRef(false)
+  /** Skip schema-reload on mount — selectedSchema is already seeded from ?schema=. */
+  const prevSelectedSchemaRef = useRef(selectedSchema)
 
   useEffect(() => {
     loadProject()
@@ -427,6 +451,8 @@ export function useTableData(slug: string, showToast: (msg: string, type?: Toast
   // Reload tables when selected schema changes (skip initial mount)
   useEffect(() => {
     if (!initialLoadDone.current) return
+    if (prevSelectedSchemaRef.current === selectedSchema) return
+    prevSelectedSchemaRef.current = selectedSchema
     setSelectedTable(null)
     setTableData(null)
     setLoading(true)
@@ -454,12 +480,32 @@ export function useTableData(slug: string, showToast: (msg: string, type?: Toast
     setFilters(updated)
   }
   const removeFilter = (index: number) => { setFilters(filters.filter((_, i) => i !== index)) }
-  const clearFilters = () => { setFilters([]); setCurrentPage(0) }
-  const applyFilters = () => { setCurrentPage(0) }
+  /** Remove an applied filter chip and refresh immediately (no second Apply). */
+  const removeAppliedFilter = (index: number) => {
+    const next = appliedFilters.filter((_, i) => i !== index).map((f) => ({ ...f }))
+    setAppliedFilters(next)
+    setFilters(next)
+    setCurrentPage(0)
+  }
+  const clearFilters = () => {
+    setFilters([])
+    setAppliedFilters([])
+    setCurrentPage(0)
+  }
+  const applyFilters = () => {
+    setAppliedFilters(filters.map((f) => ({ ...f })))
+    setCurrentPage(0)
+  }
+  const discardFilterDraft = useCallback(() => {
+    setFilters(appliedFilters.map((f) => ({ ...f })))
+  }, [appliedFilters])
 
   const updateSelectedTable = useCallback((tableName: string | null) => {
+    // Same table: do not clear filters / reload — prevents Edit Table from flashing the grid.
+    if (tableName === selectedTableRef.current) return
     pendingTableFromClickRef.current = tableName
     setFilters([])
+    setAppliedFilters([])
     setCurrentPage(0)
     setSelectedTable(tableName)
   }, [])
@@ -473,8 +519,9 @@ export function useTableData(slug: string, showToast: (msg: string, type?: Toast
     error, setError, searchTerm, setSearchTerm,
     currentPage, setCurrentPage, pageSize,
     sortColumn, setSortColumn, sortDirection, setSortDirection,
-    filters, setFilters, filteredTables,
+    filters, setFilters, appliedFilters, filteredTables,
     loadProject, loadTables, loadTableData, refreshTablesAndData,
-    handleSort, clearSort, addFilter, updateFilter, removeFilter, clearFilters, applyFilters,
+    handleSort, clearSort, addFilter, updateFilter, removeFilter, removeAppliedFilter,
+    clearFilters, applyFilters, discardFilterDraft,
   }
 }

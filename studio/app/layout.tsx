@@ -33,7 +33,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#667eea',
+  themeColor: '#2563eb',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
@@ -46,7 +46,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} bg-zinc-50 text-zinc-900 dark:bg-[#050505] dark:text-zinc-100 antialiased`}>
+      <body className={`${inter.className} bg-background text-sm text-foreground antialiased`}>
         <Providers>
           <ActivityTracker />
           {children}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { Database, Table as TableIcon, Radio, X } from 'lucide-react'
 import { Sidebar } from '@/components/Sidebar'
@@ -8,6 +8,8 @@ import { ConfirmationModal } from '@/components/ConfirmationModal'
 import { useToast } from '@/components/Toast'
 import axios from 'axios'
 import api from '@/lib/api'
+import { PageSkeleton } from '@/components/Skeleton'
+import { isPortaledSelectMenuTarget } from '@/components/AppSelect'
 import type { Column, ConfirmationModalState } from './types'
 import {
   getFullTypeString,
@@ -17,17 +19,30 @@ import {
   pgUsingClauseForAlterType,
 } from './utils/postgresTypes'
 import { convertToJSON, convertToSQL, convertToCSV, downloadFile } from './utils/dataExport'
-import { buildDeleteByPrimaryKeyQuery, buildUpdateCellQuery } from './utils/tableSql'
+import { estimateColumnWidth } from './utils/columnDisplay'
+import { buildDeleteByPrimaryKeyQuery, buildUpdateCellQuery, buildUpdateRowQuery } from './utils/tableSql'
 import { useTableData } from './hooks/useTableData'
 import { useRLS } from './hooks/useRLS'
 import { usePostgresDataTypes } from './hooks/usePostgresDataTypes'
 import {
   TablesSidebar, TableToolbar, DataTable,
-  CreateTableModal, InsertRecordModal, DeleteTableModal, DeleteColumnModal,
+  CreateTableModal, InsertRecordModal, EditRowModal, DeleteTableModal, DeleteColumnModal,
   EditTableModal, RLSModal,
 } from './components'
 
 export default function TablesPage() {
+  return (
+    <Suspense fallback={
+    <div className="min-h-screen bg-white dark:bg-[#0a0a0f] flex items-center justify-center">
+    <Database className="w-8 h-8 text-blue-500 animate-pulse" />
+      </div>
+    }>
+      <TablesPageContent />
+    </Suspense>
+  )
+}
+
+function TablesPageContent() {
   const router = useRouter()
   const params = useParams()
   const slug = params.slug as string
@@ -35,12 +50,16 @@ export default function TablesPage() {
 
   const td = useTableData(slug, showToast)
   const rls = useRLS(slug, showToast, td.selectedSchema)
-  const { postgresDataTypes } = usePostgresDataTypes(slug)
+  const { postgresDataTypes, reloadDataTypes } = usePostgresDataTypes(slug)
 
   // Modal states
   const [showNewTableModal, setShowNewTableModal] = useState(false)
   const [showInsertModal, setShowInsertModal] = useState(false)
   const [showEditTableModal, setShowEditTableModal] = useState(false)
+  /** When Edit Table targets another table, wait for its data before opening the panel. */
+  const [pendingOpenEditTable, setPendingOpenEditTable] = useState(false)
+  /** When opening Edit Table from a column header, pre-expand this column in the sidebar. */
+  const pendingEditColumnRef = useRef<string | null>(null)
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [showCopyMenu, setShowCopyMenu] = useState(false)
@@ -72,10 +91,13 @@ export default function TablesPage() {
   const [columnsToRemove, setColumnsToRemove] = useState<string[]>([])
   const [columnsToEdit, setColumnsToEdit] = useState<Record<string, Column>>({})
 
-  // Inline editing
+  // Cell / row editing (side panels)
   const [editingCell, setEditingCell] = useState<{ row: number, col: string } | null>(null)
   const [editValue, setEditValue] = useState<any>('')
   const [savingEdit, setSavingEdit] = useState(false)
+  const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null)
+  const [editRowData, setEditRowData] = useState<Record<string, any>>({})
+  const [savingRow, setSavingRow] = useState(false)
   const [editingTableName, setEditingTableName] = useState(false)
   const [tableNameEditValue, setTableNameEditValue] = useState('')
   const [savingTableName, setSavingTableName] = useState(false)
@@ -131,17 +153,25 @@ export default function TablesPage() {
   useEffect(() => {
     const handleOutsideClick = (event: MouseEvent) => {
       const target = event.target as Node
+      // AppSelect / type picker menus portal to document.body — treat as inside.
+      if (isPortaledSelectMenuTarget(event.target)) return
       if (
         (sortMenuRef.current && sortMenuRef.current.contains(target)) ||
         (filterMenuRef.current && filterMenuRef.current.contains(target)) ||
         (copyMenuRef.current && copyMenuRef.current.contains(target)) ||
         (exportMenuRef.current && exportMenuRef.current.contains(target))
       ) return
-      setShowSortMenu(false); setShowFilterMenu(false); setShowCopyMenu(false); setShowExportMenu(false)
+      setShowSortMenu(false)
+      setShowFilterMenu((open) => {
+        if (open) td.discardFilterDraft()
+        return false
+      })
+      setShowCopyMenu(false)
+      setShowExportMenu(false)
     }
     document.addEventListener('mousedown', handleOutsideClick)
     return () => document.removeEventListener('mousedown', handleOutsideClick)
-  }, [])
+  }, [td.discardFilterDraft])
 
   useEffect(() => { setShowSortMenu(false); setShowFilterMenu(false) }, [td.selectedTable])
   useEffect(() => { setSelectedRowIndices(new Set()) }, [td.tableData?.data])
@@ -155,7 +185,31 @@ export default function TablesPage() {
 
   useEffect(() => {
     if (td.selectedTable) td.loadTableData(td.selectedTable, rls.loadRLSData)
-  }, [td.selectedTable, td.selectedSchema, td.filters, td.sortColumn, td.sortDirection, td.currentPage, td.pageSize])
+  }, [td.selectedTable, td.selectedSchema, td.appliedFilters, td.sortColumn, td.sortDirection, td.currentPage, td.pageSize])
+
+  useEffect(() => {
+    if (!pendingOpenEditTable) return
+    if (td.selectedTable && td.tableData && !td.loadingData) {
+      const columnName = pendingEditColumnRef.current
+      pendingEditColumnRef.current = null
+      if (columnName) {
+        const col = td.tableData.columns.find((c: any) => c.name === columnName)
+        if (col) {
+          const ui = pgInformationSchemaToUiColumn(col)
+          setColumnsToEdit({
+            [columnName]: {
+              name: col.name,
+              type: ui.type,
+              typeParams: ui.typeParams,
+              nullable: col.null === 'YES' ? 'YES' : 'NO',
+            },
+          })
+        }
+      }
+      setShowEditTableModal(true)
+      setPendingOpenEditTable(false)
+    }
+  }, [pendingOpenEditTable, td.selectedTable, td.tableData, td.loadingData])
 
   useEffect(() => {
     if (rls.showRLSModal && td.selectedTable) rls.loadRLSData(td.selectedTable)
@@ -180,8 +234,8 @@ export default function TablesPage() {
     const handleMouseMove = (e: MouseEvent) => {
       if (!resizingColumn) return
       const delta = e.clientX - resizeStartX
-      const currentWidth = columnWidths[resizingColumn] || 200
-      setColumnWidths(prev => ({ ...prev, [resizingColumn]: Math.max(100, currentWidth + delta) }))
+      const currentWidth = columnWidths[resizingColumn] ?? getColumnWidth(resizingColumn)
+      setColumnWidths(prev => ({ ...prev, [resizingColumn]: Math.max(120, currentWidth + delta) }))
       setResizeStartX(e.clientX)
     }
     const handleMouseUp = () => setResizingColumn(null)
@@ -192,7 +246,12 @@ export default function TablesPage() {
     }
   }, [resizingColumn, resizeStartX])
 
-  const getColumnWidth = (col: string) => columnWidths[col] || 'auto'
+  const getColumnWidth = (colName: string): number => {
+    if (columnWidths[colName]) return columnWidths[colName]
+    const col = td.tableData?.columns?.find((c: { name: string }) => c.name === colName)
+    if (col) return estimateColumnWidth(col)
+    return 160
+  }
 
   // Row selection
   const toggleRowSelection = (rowIdx: number) => {
@@ -326,6 +385,93 @@ export default function TablesPage() {
     }
   }
 
+  const startEditingRow = (rowIndex: number) => {
+    if (!td.tableData?.data?.[rowIndex]) return
+    const row = td.tableData.data[rowIndex]
+    const next: Record<string, any> = {}
+    for (const col of td.tableData.columns) {
+      const value = row[col.name]
+      const t = (col.type || '').toLowerCase()
+      if (value !== null && value !== undefined && typeof value === 'object') {
+        next[col.name] = JSON.stringify(value, null, t.includes('json') ? 2 : 0)
+      } else {
+        next[col.name] = value ?? ''
+      }
+    }
+    setEditingCell(null)
+    setEditValue('')
+    setEditingRowIndex(rowIndex)
+    setEditRowData(next)
+  }
+
+  const cancelEditingRow = () => {
+    setEditingRowIndex(null)
+    setEditRowData({})
+  }
+
+  const saveRowEdit = async () => {
+    if (editingRowIndex == null || !td.selectedTable || !td.tableData) return
+    setSavingRow(true)
+    try {
+      const original = td.tableData.data[editingRowIndex]
+      const pkCols = getPrimaryKeyColumnNames(td.tableData)
+      if (pkCols.length === 0) {
+        showToast('No primary key — add one in Edit table or use SQL.', 'error')
+        return
+      }
+
+      const updates: Record<string, unknown> = {}
+      for (const col of td.tableData.columns) {
+        if (col.key === 'PRI') continue
+        const t = (col.type || '').toLowerCase()
+        let newVal: unknown = editRowData[col.name]
+        if (newVal === '') newVal = null
+        if (t.includes('json') && typeof newVal === 'string' && newVal.trim()) {
+          try {
+            newVal = JSON.parse(newVal)
+          } catch {
+            showToast(`Invalid JSON in ${col.name}`, 'error')
+            return
+          }
+        }
+        const originalVal = original[col.name]
+        const originalCmp =
+          originalVal !== null && originalVal !== undefined && typeof originalVal === 'object'
+            ? JSON.stringify(originalVal)
+            : originalVal ?? ''
+        const nextCmp =
+          newVal !== null && newVal !== undefined && typeof newVal === 'object'
+            ? JSON.stringify(newVal)
+            : newVal ?? ''
+        if (String(originalCmp) !== String(nextCmp)) {
+          updates[col.name] = newVal
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        showToast('No changes to save', 'success')
+        cancelEditingRow()
+        return
+      }
+
+      const q = buildUpdateRowQuery(
+        td.selectedTable,
+        updates,
+        original,
+        pkCols,
+        td.tableData.columns
+      )
+      await api.post('/api/v1/db/execute', { query: q, schema: td.selectedSchema }, { headers: { 'X-Project-Slug': slug } })
+      await td.loadTableData(td.selectedTable)
+      cancelEditingRow()
+      showToast('Row updated!', 'success')
+    } catch (err: any) {
+      showToast(`Error: ${err.message}`, 'error')
+    } finally {
+      setSavingRow(false)
+    }
+  }
+
   // Table name editing
   const startEditingTableName = () => { if (!td.selectedTable) return; setTableNameEditValue(td.selectedTable); setEditingTableName(true) }
   const cancelEditingTableName = () => { setEditingTableName(false); setTableNameEditValue('') }
@@ -345,9 +491,49 @@ export default function TablesPage() {
   }
 
   // Menu toggles
-  const toggleFilterMenu = () => { if (!td.tableData) return; setShowFilterMenu(prev => !prev); setShowSortMenu(false) }
-  const toggleSortMenu = () => { if (!td.tableData) return; setShowSortMenu(prev => !prev); setShowFilterMenu(false) }
-  const handleSortSelection = (col: string) => { td.setSortColumn(col); td.setSortDirection(td.sortColumn === col && td.sortDirection === 'asc' ? 'desc' : 'asc'); setShowSortMenu(false) }
+  const toggleFilterMenu = () => {
+    if (!td.tableData) return
+    if (showFilterMenu) {
+      td.discardFilterDraft()
+      setShowFilterMenu(false)
+    } else {
+      if (td.filters.length === 0) td.addFilter()
+      setShowFilterMenu(true)
+    }
+    setShowSortMenu(false)
+  }
+  const toggleSortMenu = () => {
+    if (!td.tableData) return
+    setShowSortMenu((prev) => !prev)
+    setShowFilterMenu((open) => {
+      if (open) td.discardFilterDraft()
+      return false
+    })
+  }
+  const handleApplySort = (col: string, direction: 'asc' | 'desc') => {
+    td.setSortColumn(col)
+    td.setSortDirection(direction)
+    setShowSortMenu(false)
+  }
+
+  const handleImportCSV = async (file: File) => {
+    if (!td.selectedTable) return
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('delimiter', ',')
+      form.append('has_header', 'true')
+      form.append('create_table', 'false')
+      await api.post(`/api/v1/import/${slug}/csv/${td.selectedTable}`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      await td.loadTableData(td.selectedTable, rls.loadRLSData)
+      showToast('CSV imported successfully', 'success')
+    } catch (err: any) {
+      const detail = err.response?.data?.detail
+      showToast(typeof detail === 'string' ? detail : 'Failed to import CSV', 'error')
+    }
+  }
 
   // Insert
   const prepareInsertModal = () => {
@@ -374,9 +560,8 @@ export default function TablesPage() {
   const toggleColumnDropdown = (col: string, e: React.MouseEvent) => { e.stopPropagation(); setActiveColumnDropdown(activeColumnDropdown === col ? null : col) }
   const handleSortFromDropdown = (col: string, dir: 'asc' | 'desc') => { td.setSortColumn(col); td.setSortDirection(dir); setActiveColumnDropdown(null) }
   const handleEditColumn = (col: string) => {
-    if (!td.tableData) return
-    const c = td.tableData.columns.find((x: any) => x.name === col)
-    if (c) { setEditingColumn(col); setColumnEditData({ name: c.name, type: c.type, nullable: c.null || 'YES' }); setActiveColumnDropdown(null) }
+    setActiveColumnDropdown(null)
+    openEditTableModal(undefined, col)
   }
   const handleSaveColumnEdit = async () => {
     if (!td.selectedTable || !editingColumn || !columnEditData) return
@@ -427,17 +612,51 @@ export default function TablesPage() {
   }
 
 
-  // Edit table modal handlers
-  const openEditTableModal = (tableName?: string) => {
+  // Edit table modal handlers — open panel without forcing a table data refresh.
+  const openEditTableModal = (tableName?: string, columnToEdit?: string) => {
     const target = tableName || td.selectedTable
     if (!target) return
-    td.setSelectedTable(target)
+
     setEditTableName(target)
     setColumnsToAdd([])
     setColumnsToRemove([])
-    setColumnsToEdit({})
     setPrimaryKeyColumnToAdd(null)
-    setShowEditTableModal(true)
+    void reloadDataTypes()
+
+    const seedColumnEdit = (columnName: string | undefined) => {
+      if (!columnName || !td.tableData || td.selectedTable !== target) {
+        setColumnsToEdit({})
+        return
+      }
+      const col = td.tableData.columns.find((c: any) => c.name === columnName)
+      if (!col) {
+        setColumnsToEdit({})
+        return
+      }
+      const ui = pgInformationSchemaToUiColumn(col)
+      setColumnsToEdit({
+        [columnName]: {
+          name: col.name,
+          type: ui.type,
+          typeParams: ui.typeParams,
+          nullable: col.null === 'YES' ? 'YES' : 'NO',
+        },
+      })
+    }
+
+    if (td.selectedTable === target && td.tableData) {
+      seedColumnEdit(columnToEdit)
+      setShowEditTableModal(true)
+      return
+    }
+
+    // Editing a different table: select it, then open once its metadata is ready.
+    pendingEditColumnRef.current = columnToEdit || null
+    setColumnsToEdit({})
+    setPendingOpenEditTable(true)
+    if (td.selectedTable !== target) {
+      td.setSelectedTable(target)
+    }
   }
   const startEditingColumnInModal = (columnName: string) => {
     if (!td.tableData) return
@@ -559,13 +778,13 @@ export default function TablesPage() {
     try {
       // Batch all ALTER TABLE operations
       const batchQueries: string[] = []
-      
+
       // Table rename (must be first)
       if (editTableName.trim() && editTableName !== td.selectedTable) {
         batchQueries.push(`ALTER TABLE "${td.selectedTable}" RENAME TO "${editTableName.trim()}"`)
         currentTableName = editTableName.trim()
       }
-      
+
       // Column renames (must happen before adds/drops / type changes)
       for (const [originalName, editedCol] of Object.entries(columnsToEdit)) {
         if (!editedCol.name.trim()) continue
@@ -615,7 +834,7 @@ export default function TablesPage() {
         if (col.nullable === 'NO') def += ' NOT NULL'
         batchQueries.push(`ALTER TABLE "${currentTableName}" ADD COLUMN ${def}`)
       }
-      
+
       // Drop columns (must be last before adding PK)
       for (const colName of columnsToRemove) {
         batchQueries.push(`ALTER TABLE "${currentTableName}" DROP COLUMN "${colName}"`)
@@ -630,7 +849,7 @@ export default function TablesPage() {
       if (batchQueries.length > 0) {
         await api.post('/api/v1/db/execute', { queries: batchQueries, schema: td.selectedSchema }, { headers: { 'X-Project-Slug': slug } })
       }
-      
+
       await td.loadTables()
       td.setSelectedTable(currentTableName)
       // Refresh table data to show updated structure (new columns, renamed columns, etc.)
@@ -739,16 +958,11 @@ export default function TablesPage() {
 
   // Loading guard
   if (!td.project) {
-    return (
-      <div className="h-screen bg-zinc-50 dark:bg-[#000000] flex items-center justify-center transition-colors duration-300">
-        <div className="text-center"><div className="w-12 h-12 border-4 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" /><p className="text-zinc-500 dark:text-white/60">Loading...</p></div>
-      </div>
-    )
+  return <PageSkeleton variant="editor" projectSlug={slug} />
   }
 
-
   return (
-    <div className="h-screen bg-zinc-50 dark:bg-[#000000] overflow-hidden transition-colors duration-300">
+  <div className="h-screen bg-zinc-50 dark:bg-[#0a0a0f] overflow-hidden transition-colors duration-300">
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#00000010_1px,transparent_1px),linear-gradient(to_bottom,#00000010_1px,transparent_1px)] dark:bg-[linear-gradient(to_right,#ffffff0a_1px,transparent_1px),linear-gradient(to_bottom,#ffffff0a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_80%_50%_at_50%_50%,rgba(0,0,0,0.8)_70%,transparent_100%)] dark:[mask-image:radial-gradient(ellipse_80%_50%_at_50%_50%,rgba(255,255,255,0.8)_70%,transparent_100%)] animate-grid-flow" />
       </div>
@@ -764,14 +978,14 @@ export default function TablesPage() {
           showTableDropdown={showTableDropdown} setShowTableDropdown={setShowTableDropdown}
           renamingTable={renamingTable} setRenamingTable={setRenamingTable}
           renamingTableValue={renamingTableValue} setRenamingTableValue={setRenamingTableValue}
-          onRefresh={td.loadTables} onNewTable={() => setShowNewTableModal(true)}
+          onRefresh={td.loadTables} onNewTable={() => { reloadDataTypes(); setShowNewTableModal(true) }}
           onRenameInline={handleRenameInline} onCopyTableName={handleCopyTableName}
           onEditTable={openEditTableModal} onDuplicateTable={handleDuplicateTable}
           onManageRLS={onManageRLS} onCreateRLSPolicy={onCreateRLSPolicy}
           onDeleteTable={(name) => { td.setSelectedTable(name); setShowDeleteTableModal(true) }}
         />
 
-        <div className="flex-1 flex flex-col bg-zinc-50 dark:bg-[#000000] min-w-0 transition-colors duration-300">
+        <div className="flex-1 flex flex-col bg-zinc-50 dark:bg-[#0a0a0f] min-w-0 transition-colors duration-300">
           {td.selectedTable ? (
             <>
               <TableToolbar
@@ -791,10 +1005,17 @@ export default function TablesPage() {
                 onExportAsJSON={handleExportAsJSON} onExportAsSQL={handleExportAsSQL} onExportAsCSV={handleExportAsCSV}
                 showFilterMenu={showFilterMenu} setShowFilterMenu={setShowFilterMenu}
                 showSortMenu={showSortMenu} setShowSortMenu={setShowSortMenu}
-                filters={td.filters} onAddFilter={td.addFilter} onUpdateFilter={td.updateFilter}
-                onRemoveFilter={td.removeFilter} onClearFilters={td.clearFilters} onApplyFilters={td.applyFilters}
-                onSortSelection={handleSortSelection} onToggleFilterMenu={toggleFilterMenu}
-                onToggleSortMenu={toggleSortMenu} onInsertRow={prepareInsertModal}
+                filters={td.filters} appliedFilters={td.appliedFilters}
+                onAddFilter={td.addFilter} onUpdateFilter={td.updateFilter}
+                onRemoveFilter={td.removeFilter} onRemoveAppliedFilter={td.removeAppliedFilter}
+                onClearFilters={td.clearFilters} onApplyFilters={td.applyFilters}
+                onDiscardFilterDraft={td.discardFilterDraft}
+                onApplySort={handleApplySort}
+                onToggleFilterMenu={toggleFilterMenu}
+                onToggleSortMenu={toggleSortMenu}
+                onInsertRow={prepareInsertModal}
+                onInsertColumn={() => openEditTableModal()}
+                onImportCSV={handleImportCSV}
                 sortMenuRef={sortMenuRef} filterMenuRef={filterMenuRef}
                 copyMenuRef={copyMenuRef} exportMenuRef={exportMenuRef}
               />
@@ -814,6 +1035,7 @@ export default function TablesPage() {
                 columnWidths={columnWidths} onResizeStart={handleResizeStart} getColumnWidth={getColumnWidth}
                 editingCell={editingCell} editValue={editValue} setEditValue={setEditValue}
                 savingEdit={savingEdit} onStartEditing={startEditing} onSaveEdit={saveEdit} onCancelEditing={cancelEditing}
+                onEditRow={startEditingRow}
                 currentPage={td.currentPage} setCurrentPage={td.setCurrentPage} pageSize={td.pageSize}
               />
             </>
@@ -821,7 +1043,7 @@ export default function TablesPage() {
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
                 <TableIcon className="w-16 h-16 text-zinc-600 dark:text-white/30 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold mb-2 text-zinc-900 dark:text-white">Select a table</h3>
+                <h3 className="text-sm font-medium mb-2 text-foreground">Select a table</h3>
                 <p className="text-zinc-600 dark:text-white/60">Choose a table from the sidebar to view and edit data</p>
               </div>
             </div>
@@ -855,6 +1077,19 @@ export default function TablesPage() {
           selectedTable={td.selectedTable} tableData={td.tableData}
           insertData={insertData} setInsertData={setInsertData} insertingRecord={td.insertingRecord}
           onClose={() => setShowInsertModal(false)} onInsert={handleInsertRecord}
+        />
+      )}
+
+      {editingRowIndex != null && td.selectedTable && td.tableData && (
+        <EditRowModal
+          selectedTable={td.selectedTable}
+          tableData={td.tableData}
+          rowIndex={editingRowIndex}
+          editRowData={editRowData}
+          setEditRowData={setEditRowData}
+          savingRow={savingRow}
+          onClose={cancelEditingRow}
+          onSave={saveRowEdit}
         />
       )}
 
@@ -932,9 +1167,9 @@ export default function TablesPage() {
       {/* Realtime Enable/Disable Modal */}
       {showRealtimeModal && td.selectedTable && (
         <div className="fixed inset-0 bg-white dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-          <div className="glass-card border border-zinc-200 dark:border-white/20 rounded-2xl p-6 max-w-md w-full">
+        <div className="glass-card border border-zinc-300 dark:border-white/20 rounded-md p-6 max-w-md w-full">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold text-zinc-900 dark:text-white">
+              <h3 className="text-sm font-semibold text-foreground">
                 {realtimeEnabled ? 'Disable' : 'Enable'} realtime for {td.selectedTable}
               </h3>
               <button onClick={() => setShowRealtimeModal(false)} className="text-zinc-600 dark:text-white/60 hover:text-zinc-900 dark:hover:text-white">
@@ -945,7 +1180,7 @@ export default function TablesPage() {
             {realtimeEnabled ? (
               <div className="mb-6">
                 <p className="text-zinc-600 dark:text-white/70 text-sm mb-3">
-                  Realtime is currently <span className="text-green-400 font-medium">enabled</span> for this table.
+                Realtime is currently <span className="text-blue-400 font-medium">enabled</span> for this table.
                 </p>
                 <p className="text-zinc-600 dark:text-white/50 text-sm">
                   Disabling realtime will remove the trigger that broadcasts changes. Existing subscribers will stop receiving updates.
@@ -956,63 +1191,63 @@ export default function TablesPage() {
                 <p className="text-zinc-600 dark:text-white/70 text-sm mb-3">
                   Once realtime has been enabled, the table will broadcast any changes to authorized subscribers.
                 </p>
-                <div className="bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 rounded-lg p-4 space-y-3">
-                  <div className="flex items-start gap-3">
-                    <div className="w-6 h-6 bg-green-500/20 rounded flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <span className="text-green-400 text-xs font-bold">1</span>
-                    </div>
-                    <div>
-                      <p className="text-zinc-900 dark:text-white text-sm font-medium">Trigger Installation</p>
-                      <p className="text-zinc-600 dark:text-white/50 text-xs">A PostgreSQL trigger will be installed on this table</p>
-                    </div>
-                  </div>
+                <div className="bg-zinc-100 dark:bg-white/5 border border-zinc-300 dark:border-white/10 rounded-md p-4 space-y-3">
                   <div className="flex items-start gap-3">
                     <div className="w-6 h-6 bg-blue-500/20 rounded flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <span className="text-blue-400 text-xs font-bold">2</span>
+                    <span className="text-blue-400 text-xs font-bold">1</span>
                     </div>
                     <div>
-                      <p className="text-zinc-900 dark:text-white text-sm font-medium">Change Detection</p>
-                      <p className="text-zinc-600 dark:text-white/50 text-xs">INSERT, UPDATE, and DELETE events will be captured</p>
+                    <p className="text-foreground text-sm font-medium">Trigger Installation</p>
+                    <p className="text-zinc-600 dark:text-white/50 text-xs">A PostgreSQL trigger will be installed on this table</p>
                     </div>
                   </div>
                   <div className="flex items-start gap-3">
-                    <div className="w-6 h-6 bg-purple-500/20 rounded flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <span className="text-purple-400 text-xs font-bold">3</span>
+                  <div className="w-6 h-6 bg-blue-500/20 rounded flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-blue-400 text-xs font-bold">2</span>
                     </div>
                     <div>
-                      <p className="text-zinc-900 dark:text-white text-sm font-medium">Live Broadcast</p>
-                      <p className="text-zinc-600 dark:text-white/50 text-xs">Changes are broadcast via NOTIFY to connected subscribers</p>
+                    <p className="text-foreground text-sm font-medium">Change Detection</p>
+                    <p className="text-zinc-600 dark:text-white/50 text-xs">INSERT, UPDATE, and DELETE events will be captured</p>
                     </div>
                   </div>
+                  <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 bg-blue-500/20 rounded flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-blue-400 text-xs font-bold">3</span>
                 </div>
+                <div>
+                <p className="text-foreground text-sm font-medium">Live Broadcast</p>
+                <p className="text-zinc-600 dark:text-white/50 text-xs">Changes are broadcast via NOTIFY to connected subscribers</p>
               </div>
-            )}
-
-            <div className="flex space-x-3">
-              <button
-                onClick={() => setShowRealtimeModal(false)}
-                className="flex-1 px-4 py-2.5 border border-zinc-200 dark:border-white/20 text-zinc-900 dark:text-white rounded-lg hover:bg-zinc-200 dark:hover:bg-white/10 dark:bg-white/5 transition-colors text-sm font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleToggleRealtime}
-                disabled={togglingRealtime}
-                className={`flex-1 px-4 py-2.5 rounded-lg text-zinc-900 dark:text-white text-sm font-medium transition-colors disabled:opacity-50 ${
-                  realtimeEnabled
-                    ? 'bg-red-600 hover:bg-red-700'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm'
-                }`}
-              >
-                {togglingRealtime
-                  ? (realtimeEnabled ? 'Disabling...' : 'Enabling...')
-                  : (realtimeEnabled ? 'Disable realtime' : 'Enable realtime')
-                }
-              </button>
             </div>
           </div>
         </div>
       )}
-    </div>
-  )
+
+      <div className="flex space-x-3">
+      <button
+      onClick={() => setShowRealtimeModal(false)}
+      className="flex-1 px-4 py-2.5 border border-zinc-300 dark:border-white/20 text-foreground rounded-md hover:bg-zinc-200 dark:bg-white/5 dark:hover:bg-white/10 transition-colors text-sm font-medium"
+      >
+      Cancel
+    </button>
+    <button
+    onClick={handleToggleRealtime}
+    disabled={togglingRealtime}
+    className={`flex-1 px-4 py-2.5 rounded-md text-foreground text-sm font-medium transition-colors disabled:opacity-50 ${
+    realtimeEnabled
+    ? 'bg-red-600 hover:bg-red-700'
+    : 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm'
+  }`}
+  >
+  {togglingRealtime
+  ? (realtimeEnabled ? 'Disabling...' : 'Enabling...')
+  : (realtimeEnabled ? 'Disable realtime' : 'Enable realtime')
+}
+</button>
+</div>
+</div>
+</div>
+)}
+</div>
+)
 }

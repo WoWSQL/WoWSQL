@@ -54,7 +54,7 @@ export function Sidebar({ projectSlug, projectName }: SidebarProps) {
     <>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed top-4 left-4 z-50 lg:hidden p-2 rounded-lg bg-gradient-to-r from-blue-500 via-violet-500 to-pink-500 text-white shadow-sm"
+        className="fixed top-4 left-4 z-50 lg:hidden p-2 rounded-md bg-blue-500 hover:bg-blue-600 text-white shadow-sm"
       >
         {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
       </button>

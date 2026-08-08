@@ -12,20 +12,21 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         className={cn(
-          'inline-flex items-center justify-center rounded-lg font-medium transition-all',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+          'inline-flex items-center justify-center rounded-md font-medium text-sm text-foreground transition truncate',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500',
+          'dark:focus-visible:ring-offset-background',
           'disabled:pointer-events-none disabled:opacity-50',
           {
-            'bg-gradient-to-r from-blue-500 via-violet-500 to-pink-500 hover:opacity-90 text-white shadow-sm focus-visible:ring-violet-500': variant === 'primary',
-            'bg-zinc-100 dark:bg-white/10 text-zinc-900 dark:text-white hover:bg-zinc-200 dark:hover:bg-white/15 border border-zinc-200 dark:border-white/10': variant === 'secondary',
-            'border border-zinc-300 dark:border-white/20 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/10 hover:border-zinc-400 dark:hover:border-zinc-200': variant === 'outline',
-            'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/10': variant === 'ghost',
+            'bg-blue-500 hover:bg-blue-600 text-white shadow-sm': variant === 'primary',
+            'bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border': variant === 'secondary',
+            'border border-border text-foreground hover:bg-accent': variant === 'outline',
+            'text-muted-foreground hover:bg-accent hover:text-foreground': variant === 'ghost',
             'bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600': variant === 'destructive',
           },
           {
-            'h-9 px-4 text-sm': size === 'sm',
-            'h-10 px-6 text-base': size === 'md',
-            'h-12 px-8 text-lg': size === 'lg',
+            'h-8 px-3 text-xs': size === 'sm',
+            'h-8 px-3.5 text-xs': size === 'md',
+            'h-9 px-4 text-sm': size === 'lg',
           },
           className
         )}
@@ -38,4 +39,3 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 Button.displayName = 'Button'
 
 export { Button }
-

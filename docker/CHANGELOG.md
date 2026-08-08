@@ -2,6 +2,14 @@
 
 All notable changes to the WoWSQL self-hosted setup will be documented here.
 
+## [1.1.0] - 2026-08-08
+
+### Studio UI parity with cloud dashboard
+
+- Ported blue `ui-*` theme tokens, solid primary buttons, and dark-first theme
+- Synced Table Editor with main dashboard (AppSelect, FilterPanel, PostgresTypePicker, EditRowModal, column display utils)
+- Added Skeleton loading states used by the modern table editor
+
 ## [1.0.0] - 2026-06-12
 
 ### Initial Release

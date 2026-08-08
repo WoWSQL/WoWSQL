@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Minimize2, Save } from 'lucide-react'
+import { Save, X } from 'lucide-react'
 import { Button } from '@/components/Button'
 
-function formatJsonForView(raw: string): string {
+function formatPreview(raw: string, isJson: boolean): string {
   const t = raw.trim()
   if (!t) return ''
+  if (!isJson) return raw
   try {
     return JSON.stringify(JSON.parse(t), null, 2)
   } catch {
@@ -16,73 +17,94 @@ function formatJsonForView(raw: string): string {
 
 type CellValueExpandModalProps = {
   columnName: string
+  rowIndex: number
+  isJson?: boolean
   editValue: string
   setEditValue: (v: any) => void
   savingEdit: boolean
   editingCell: { row: number; col: string }
   onSaveEdit: (row: number, col: string) => void
   onCancelEditing: () => void
-  onClose: () => void
 }
 
 export function CellValueExpandModal({
   columnName,
+  rowIndex,
+  isJson = false,
   editValue,
   setEditValue,
   savingEdit,
   editingCell,
   onSaveEdit,
   onCancelEditing,
-  onClose,
 }: CellValueExpandModalProps) {
   const [tab, setTab] = useState<'edit' | 'view'>('edit')
+  const charCount = String(editValue ?? '').length
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onClose()
+        onCancelEditing()
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onCancelEditing])
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [])
 
   return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-white/80 dark:bg-black/75 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="cell-expand-editor-title"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      <div
-        className="w-full max-w-5xl max-h-[92vh] flex flex-col rounded-xl border border-zinc-200 dark:border-white/20 bg-zinc-100 dark:bg-[#0a0a0a] shadow-2xl overflow-hidden"
+    <div className="fixed inset-0 z-[200] flex justify-end">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/55 backdrop-blur-[2px]"
+        onClick={onCancelEditing}
+        aria-label="Close editor"
+      />
+
+      <aside
+        className="relative z-10 flex h-full w-full max-w-[min(560px,92vw)] flex-col border-l border-zinc-300 dark:border-zinc-800 bg-white dark:bg-[#0a0a0b] shadow-[-24px_0_48px_-12px_rgba(0,0,0,0.5)] animate-in slide-in-from-right duration-300"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cell-expand-editor-title"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-white/10 shrink-0">
-          <h2 id="cell-expand-editor-title" className="text-base font-medium text-zinc-900 dark:text-white">
-            Editing value of: <span className="text-blue-300">{columnName}</span>
-          </h2>
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-300 dark:border-zinc-800 px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+              Update cell
+            </p>
+            <h2 id="cell-expand-editor-title" className="mt-1 text-base font-semibold text-foreground">
+              <span className="text-blue-500 dark:text-blue-400">{columnName}</span>
+            </h2>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              Row {rowIndex + 1} · {charCount.toLocaleString()} characters
+            </p>
+          </div>
           <button
             type="button"
-            onClick={onClose}
-            className="p-2 rounded-lg text-zinc-600 dark:text-white/60 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200 dark:hover:bg-white/10 dark:bg-white/5"
-            title="Close expanded editor"
+            onClick={onCancelEditing}
+            className="shrink-0 rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            title="Cancel"
           >
-            <X className="w-5 h-5" />
+            <X className="h-4 w-4" />
           </button>
-        </div>
-        <div className="flex border-b border-zinc-200 dark:border-white/10 shrink-0 px-2 gap-1">
+        </header>
+
+        <div className="flex shrink-0 border-b border-zinc-300 dark:border-zinc-800 px-5 gap-1">
           <button
             type="button"
             onClick={() => setTab('edit')}
-            className={`px-4 py-2 text-sm rounded-t-md transition-colors ${
+            className={`px-3 py-2.5 text-sm border-b-2 -mb-px transition-colors ${
               tab === 'edit'
-                ? 'bg-zinc-100 dark:bg-white/10 text-zinc-900 dark:text-white font-medium'
-                : 'text-zinc-600 dark:text-white/50 hover:text-zinc-500 dark:text-white/80'
+                ? 'border-blue-500 text-foreground font-medium'
+                : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
             }`}
           >
             Edit
@@ -90,70 +112,56 @@ export function CellValueExpandModal({
           <button
             type="button"
             onClick={() => setTab('view')}
-            className={`px-4 py-2 text-sm rounded-t-md transition-colors ${
+            className={`px-3 py-2.5 text-sm border-b-2 -mb-px transition-colors ${
               tab === 'view'
-                ? 'bg-zinc-100 dark:bg-white/10 text-zinc-900 dark:text-white font-medium'
-                : 'text-zinc-600 dark:text-white/50 hover:text-zinc-500 dark:text-white/80'
+                ? 'border-blue-500 text-foreground font-medium'
+                : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
             }`}
           >
-            View
+            Preview
           </button>
         </div>
-        <div className="flex-1 min-h-[min(420px,50vh)] overflow-auto p-4">
+
+        <div className="min-h-0 flex-1 overflow-hidden p-5">
           {tab === 'edit' ? (
             <textarea
               value={editValue}
               onChange={(e) => setEditValue(e.target.value)}
-              className="w-full min-h-[360px] h-[50vh] px-3 py-2 rounded-lg bg-white/80 dark:bg-black/50 border border-zinc-200 dark:border-white/15 text-emerald-100/95 text-sm font-mono leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+              className="h-full w-full resize-none rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 px-4 py-3 text-[13px] font-mono leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/40 custom-scrollbar"
               spellCheck={false}
               disabled={savingEdit}
               autoFocus
             />
           ) : (
-            <pre className="whitespace-pre-wrap break-words text-sm font-mono text-orange-100/95 leading-relaxed p-3 rounded-lg bg-white/80 dark:bg-black/40 border border-zinc-200 dark:border-white/10 min-h-[360px] overflow-auto">
-              {formatJsonForView(String(editValue ?? ''))}
+            <pre className="h-full overflow-auto rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 px-4 py-3 text-[13px] font-mono leading-relaxed text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words custom-scrollbar">
+              {formatPreview(String(editValue ?? ''), isJson)}
             </pre>
           )}
         </div>
-        <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-zinc-200 dark:border-white/10 shrink-0 bg-white/80 dark:bg-black/20">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10"
-              disabled={savingEdit}
-              onClick={() => {
-                onSaveEdit(editingCell.row, editingCell.col)
-                onClose()
-              }}
-            >
-              <Save className="w-4 h-4 mr-1.5" />
-              Save changes
-            </Button>
-            <button
-              type="button"
-              onClick={() => {
-                onCancelEditing()
-                onClose()
-              }}
-              className="text-sm text-zinc-600 dark:text-white/50 hover:text-zinc-500 dark:text-white/80 px-2"
-              disabled={savingEdit}
-            >
-              <span className="text-zinc-600 dark:text-white/40 font-mono text-xs mr-1">Esc</span>
-              Cancel changes
-            </button>
-          </div>
-          <button
+
+        <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-300 dark:border-zinc-800 bg-zinc-50/90 px-5 py-4 dark:bg-zinc-900/50">
+          <Button
             type="button"
-            onClick={onClose}
-            className="p-2 rounded-lg text-zinc-600 dark:text-white/50 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200 dark:hover:bg-white/10 dark:bg-white/5"
-            title="Collapse to inline editor"
+            variant="outline"
+            size="sm"
+            onClick={onCancelEditing}
+            disabled={savingEdit}
+            className="h-9"
           >
-            <Minimize2 className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={savingEdit}
+            onClick={() => onSaveEdit(editingCell.row, editingCell.col)}
+            className="h-9 bg-blue-600 hover:bg-blue-500 text-white"
+          >
+            <Save className="w-4 h-4 mr-1.5" />
+            {savingEdit ? 'Saving…' : 'Save changes'}
+          </Button>
+        </footer>
+      </aside>
     </div>
   )
 }

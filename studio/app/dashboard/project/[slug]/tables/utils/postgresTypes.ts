@@ -1,4 +1,36 @@
-import type { Column, PostgreSQLDataTypes } from '../types'
+import type { Column, PostgreSQLDataType, PostgreSQLDataTypes } from '../types'
+
+/** PostgreSQL catalog pseudo-types — not valid CREATE TABLE column types. */
+const INTERNAL_PG_TYPE_PREFIXES = ['ANY', 'PG_', '_'] as const
+const INTERNAL_PG_TYPES = new Set([
+  'ACLITEM', 'BOOL', 'BPCHAR', 'CID', 'CSTRING', 'INTERNAL', 'OID', 'REGCLASS',
+  'REGCOLLATION', 'REGCONFIG', 'REGDICTIONARY', 'REGNAMESPACE', 'REGOPER',
+  'REGOPERATOR', 'REGPROC', 'REGPROCEDURE', 'REGROLE', 'REGTYPE', 'TID', 'VOID',
+  'XID', 'RECORD', 'REFCURSOR', 'UNKNOWN', 'NAME', 'SMGR', 'GTSVECTOR',
+])
+
+export function isInternalPgType(value: string): boolean {
+  const v = value.toUpperCase()
+  if (INTERNAL_PG_TYPES.has(v)) return true
+  return INTERNAL_PG_TYPE_PREFIXES.some((prefix) => v.startsWith(prefix))
+}
+
+function filterUserColumnTypes(types: PostgreSQLDataType[]): PostgreSQLDataType[] {
+  return types.filter((t) => !isInternalPgType(t.value))
+}
+
+/** Strip PostgreSQL internal catalog types from every category in the API payload. */
+export function sanitizePostgresDataTypes(types: PostgreSQLDataTypes): PostgreSQLDataTypes {
+  return {
+    numeric: filterUserColumnTypes(types.numeric),
+    string: filterUserColumnTypes(types.string),
+    datetime: filterUserColumnTypes(types.datetime),
+    json: filterUserColumnTypes(types.json),
+    extension: filterUserColumnTypes(types.extension || []),
+    spatial: filterUserColumnTypes(types.spatial),
+    other: filterUserColumnTypes(types.other),
+  }
+}
 
 /** Column metadata from GET /db/tables/:name (information_schema + extras). */
 export type ApiTableColumn = {
@@ -71,6 +103,10 @@ export function pgInformationSchemaToUiColumn(col: ApiTableColumn): Pick<Column,
   if (dt === 'money') return { type: 'MONEY' }
   if (dt === 'bytea') return { type: 'BYTEA' }
   if (dt === 'xml') return { type: 'XML' }
+  if (dt === 'vector') {
+    const m = col.type.match(/vector\((\d+)\)/i)
+    return m ? { type: 'VECTOR', typeParams: m[1] } : { type: 'VECTOR' }
+  }
 
   const paren = col.type.match(/^(.+?)\((.+)\)\s*$/i)
   if (paren) {

@@ -78,3 +78,23 @@ export function buildUpdateCellQuery(
     .join(' AND ')
   return `UPDATE "${tableName}" SET "${columnName}" = ${setLit} WHERE ${whereClause}`
 }
+
+/** Multi-column UPDATE for row side-panel edits. */
+export function buildUpdateRowQuery(
+  tableName: string,
+  updates: Record<string, unknown>,
+  row: Record<string, unknown>,
+  pkColumns: string[],
+  columnsMeta: { name: string; type: string }[]
+): string {
+  const entries = Object.entries(updates)
+  if (entries.length === 0) return ''
+  const typeOf = (name: string) => columnsMeta.find((c) => c.name === name)?.type
+  const setParts = entries.map(
+    ([col, val]) => `"${col}" = ${formatPgLiteral(val, typeOf(col))}`
+  )
+  const whereClause = pkColumns
+    .map((pk) => `"${pk}" = ${formatPgLiteral(row[pk], typeOf(pk))}`)
+    .join(' AND ')
+  return `UPDATE "${tableName}" SET ${setParts.join(', ')} WHERE ${whereClause}`
+}

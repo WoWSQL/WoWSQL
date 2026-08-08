@@ -21,3 +21,22 @@ export function formatCellForDisplay(value: unknown, maxLen: number = DEFAULT_MA
 export function columnLooksLikeJson(pgType: string | undefined): boolean {
   return !!(pgType && /jsonb?/i.test(pgType))
 }
+
+export function columnLooksLikeTimestamp(pgType: string | undefined): boolean {
+  return !!(pgType && /timestamp|timestamptz|date/i.test(pgType))
+}
+
+/** Prefer side-panel editor when inline editing would be cramped or hard to read. */
+export function shouldUseExpandedCellEditor(
+  pgType: string | undefined,
+  valueText: string,
+): boolean {
+  const len = valueText.length
+  if (columnLooksLikeJson(pgType)) {
+    return len > 80 || valueText.includes('\n')
+  }
+  if (columnLooksLikeTimestamp(pgType)) {
+    return len > 20
+  }
+  return len > 64 || valueText.includes('\n')
+}

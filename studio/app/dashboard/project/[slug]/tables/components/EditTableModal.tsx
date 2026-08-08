@@ -1,59 +1,207 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Plus, X, Edit2, Trash2, KeyRound } from 'lucide-react'
 import { Button } from '@/components/Button'
+import { AppSelect } from '@/components/AppSelect'
 import type { Column, PostgreSQLDataTypes } from '../types'
 import { typeNeedsParams, getParamLabel, getTypeExample } from '../utils/postgresTypes'
+import { PostgresTypePicker } from './PostgresTypePicker'
 
-const selectStyle = {
-  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
-  backgroundRepeat: 'no-repeat' as const,
-  backgroundPosition: 'right 0.75rem center',
-  paddingRight: '2.5rem'
+const fieldClass =
+  'w-full h-9 px-3 bg-zinc-50 dark:bg-[#1c1c1c] border border-zinc-300 dark:border-white/15 rounded-md text-foreground text-xs focus:outline-none focus:border-blue-500/50'
+
+/** Supabase-style label (left) + control (right) row */
+function FieldRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string
+  hint?: string
+  children: ReactNode
+}) {
+  return (
+    <div className="grid gap-2 border-b border-zinc-200 py-4 last:border-b-0 dark:border-white/[0.06] sm:grid-cols-[160px_minmax(0,1fr)] sm:gap-6 sm:items-start">
+      <div className="pt-1.5">
+        <p className="text-xs font-medium text-foreground">{label}</p>
+        {hint ? <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">{hint}</p> : null}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
+  )
 }
 
-function TypeSelect({ value, onChange, postgresDataTypes }: { value: string; onChange: (v: string) => void; postgresDataTypes: PostgreSQLDataTypes }) {
-  const knownValues = useMemo(
-    () =>
-      new Set(
-        [
-          ...postgresDataTypes.numeric,
-          ...postgresDataTypes.string,
-          ...postgresDataTypes.datetime,
-          ...postgresDataTypes.json,
-          ...(postgresDataTypes.extension || []),
-          ...postgresDataTypes.spatial,
-          ...postgresDataTypes.other,
-        ].map((t) => t.value)
-      ),
-    [postgresDataTypes]
-  )
-  const showCurrentFromDb = value && !knownValues.has(value)
+function Toggle({
+  checked,
+  onChange,
+  label,
+  description,
+}: {
+  checked: boolean
+  onChange: (next: boolean) => void
+  label: string
+  description: string
+}) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}
-      className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/20 rounded-md text-zinc-900 dark:text-white text-sm focus:outline-none focus:border-zinc-200 dark:border-white/10 appearance-none cursor-pointer"
-      style={selectStyle}>
-      {showCurrentFromDb && (
-        <option value={value}>
-          {value} (current in DB)
-        </option>
-      )}
-      <optgroup label="Numeric Types">{postgresDataTypes.numeric.map(t => <option key={t.value} value={t.value}>{t.value}</option>)}</optgroup>
-      <optgroup label="String Types">{postgresDataTypes.string.map(t => <option key={t.value} value={t.value}>{t.value}</option>)}</optgroup>
-      <optgroup label="Date/Time Types">{postgresDataTypes.datetime.map(t => <option key={t.value} value={t.value}>{t.value}</option>)}</optgroup>
-      <optgroup label="JSON">{postgresDataTypes.json.map(t => <option key={t.value} value={t.value}>{t.value}</option>)}</optgroup>
-      {(postgresDataTypes.extension || []).length > 0 && <optgroup label="Extension Types">{postgresDataTypes.extension.map(t => <option key={t.value} value={t.value}>{t.value}</option>)}</optgroup>}
-      {postgresDataTypes.spatial.length > 0 && <optgroup label="Spatial Types">{postgresDataTypes.spatial.map(t => <option key={t.value} value={t.value}>{t.value}</option>)}</optgroup>}
-      {postgresDataTypes.other.length > 0 && <optgroup label="Other Types">{postgresDataTypes.other.map(t => <option key={t.value} value={t.value}>{t.value}</option>)}</optgroup>}
-    </select>
+    <div className="flex items-start justify-between gap-4 py-3">
+      <div className="min-w-0 pr-4">
+        <p className="text-xs font-medium text-foreground">{label}</p>
+        <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">{description}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${
+          checked ? 'bg-blue-500' : 'bg-zinc-300 dark:bg-white/20'
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+            checked ? 'translate-x-4' : 'translate-x-0'
+          }`}
+        />
+      </button>
+    </div>
+  )
+}
+
+function Section({
+  title,
+  icon,
+  children,
+  description,
+}: {
+  title: string
+  icon: ReactNode
+  children: ReactNode
+  description?: string
+}) {
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+          {icon}
+          {title}
+        </h3>
+        {description ? (
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{description}</p>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+/** In-place Supabase-style column editor (stays where the row was clicked) */
+function UpdateColumnCard({
+  originalName,
+  isPrimaryKey,
+  editedCol,
+  postgresDataTypes,
+  onUpdate,
+  onCancel,
+}: {
+  originalName: string
+  isPrimaryKey: boolean
+  editedCol: Column
+  postgresDataTypes: PostgreSQLDataTypes
+  onUpdate: (field: keyof Column, value: string) => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="rounded-md border border-zinc-300 bg-white dark:border-white/10 dark:bg-[#121212]">
+      <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-white/[0.06]">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-foreground">
+            Update column <span className="text-zinc-900 dark:text-white">{originalName}</span>
+          </p>
+          <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            Changes apply when you click Apply Changes below.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-white/10 dark:hover:text-white"
+          aria-label={`Close editor for ${originalName}`}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="px-4">
+        <p className="pt-4 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          General
+        </p>
+        <FieldRow
+          label="Name"
+          hint="Recommended to use lowercase and underscores, e.g. column_name"
+        >
+          <input
+            type="text"
+            value={editedCol.name}
+            onChange={(e) => onUpdate('name', e.target.value)}
+            className={fieldClass}
+            placeholder="column_name"
+          />
+        </FieldRow>
+
+        <p className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Data type
+        </p>
+        <FieldRow label="Type">
+          <PostgresTypePicker
+            value={editedCol.type}
+            onChange={(v) => onUpdate('type', v)}
+            postgresDataTypes={postgresDataTypes}
+          />
+        </FieldRow>
+        {typeNeedsParams(editedCol.type, postgresDataTypes) && (
+          <FieldRow
+            label={getParamLabel(editedCol.type, postgresDataTypes) || 'Parameters'}
+            hint={`Example: ${getTypeExample(editedCol.type, postgresDataTypes)}`}
+          >
+            <input
+              type="text"
+              value={editedCol.typeParams || ''}
+              onChange={(e) => onUpdate('typeParams', e.target.value)}
+              className={fieldClass}
+              placeholder={getParamLabel(editedCol.type, postgresDataTypes)}
+            />
+          </FieldRow>
+        )}
+
+        <p className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Constraints
+        </p>
+        {isPrimaryKey && (
+          <div className="border-b border-zinc-200 py-3 dark:border-white/[0.06]">
+            <p className="text-xs font-medium text-foreground">Is Primary Key</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              This column is part of the table primary key. Key changes are managed separately.
+            </p>
+            <span className="mt-2 inline-flex rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-500 bg-blue-500/15">
+              PRIMARY KEY
+            </span>
+          </div>
+        )}
+        <Toggle
+          checked={(editedCol.nullable || 'YES') === 'YES'}
+          onChange={(next) => onUpdate('nullable', next ? 'YES' : 'NO')}
+          label="Allow Nullable"
+          description="Allow the column to assume a NULL value if no value is provided"
+        />
+      </div>
+    </div>
   )
 }
 
 interface EditTableModalProps {
   selectedTable: string
   tableData: any
-  /** Resolved PK column names (from API or column.key === 'PRI'). */
   primaryKeyColumns: string[]
   primaryKeyColumnToAdd: string | null
   setPrimaryKeyColumnToAdd: (v: string | null) => void
@@ -77,13 +225,33 @@ interface EditTableModalProps {
 
 export function EditTableModal(props: EditTableModalProps) {
   const {
-    selectedTable, tableData, primaryKeyColumns, primaryKeyColumnToAdd, setPrimaryKeyColumnToAdd,
-    editTableName, setEditTableName,
-    columnsToEdit, columnsToAdd, columnsToRemove, editingTable,
-    postgresDataTypes, onClose, onApply,
-    onStartEditColumn, onUpdateColumnEdit, onCancelEditColumn,
-    onAddNewColumn, onUpdateNewColumn, onRemoveNewColumn, onToggleColumnRemoval,
+    selectedTable,
+    tableData,
+    primaryKeyColumns,
+    primaryKeyColumnToAdd,
+    setPrimaryKeyColumnToAdd,
+    editTableName,
+    setEditTableName,
+    columnsToEdit,
+    columnsToAdd,
+    columnsToRemove,
+    editingTable,
+    postgresDataTypes,
+    onClose,
+    onApply,
+    onStartEditColumn,
+    onUpdateColumnEdit,
+    onCancelEditColumn,
+    onAddNewColumn,
+    onUpdateNewColumn,
+    onRemoveNewColumn,
+    onToggleColumnRemoval,
   } = props
+
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const savedScrollTop = useRef(0)
+  const [entered, setEntered] = useState(false)
+  const [closing, setClosing] = useState(false)
 
   const hasChanges =
     (editTableName.trim() !== selectedTable && editTableName.trim() !== '') ||
@@ -92,182 +260,309 @@ export function EditTableModal(props: EditTableModalProps) {
     Object.keys(columnsToEdit).length > 0 ||
     !!primaryKeyColumnToAdd?.trim()
 
-  return (
-    <div className="fixed inset-0 bg-white/80 dark:bg-black/80 backdrop-blur-sm z-50 flex items-stretch justify-end">
-      <div className="glass-card shadow-2xl w-full sm:w-[950px] overflow-y-auto custom-scrollbar flex flex-col">
-        <div className="p-6 border-b border-zinc-200 dark:border-white/10 flex items-center justify-between">
-          <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Edit Table: {selectedTable}</h2>
-          <button onClick={onClose} className="text-zinc-600 dark:text-white/60 hover:text-zinc-900 dark:hover:text-zinc-900 dark:text-white"><X className="w-5 h-5" /></button>
-        </div>
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => setEntered(true))
+    return () => window.cancelAnimationFrame(id)
+  }, [])
 
-        <div className="p-6 space-y-6 flex-1 overflow-y-auto">
+  const requestClose = () => {
+    if (closing || editingTable) return
+    setClosing(true)
+    setEntered(false)
+    window.setTimeout(() => onClose(), 220)
+  }
+
+  // Keep scroll position when expanding/collapsing a column editor (no jump to top).
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = savedScrollTop.current
+  }, [columnsToEdit])
+
+  const rememberScrollAndEdit = (name: string) => {
+    if (scrollRef.current) savedScrollTop.current = scrollRef.current.scrollTop
+    onStartEditColumn(name)
+  }
+
+  const rememberScrollAndCancel = (name: string) => {
+    if (scrollRef.current) savedScrollTop.current = scrollRef.current.scrollTop
+    onCancelEditColumn(name)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <button
+        type="button"
+        className={`absolute inset-0 bg-black/50 backdrop-blur-[1px] transition-opacity duration-200 ${
+          entered && !closing ? 'opacity-100' : 'opacity-0'
+        }`}
+        onClick={requestClose}
+        aria-label="Close panel"
+      />
+
+      <aside
+        className={`relative z-10 flex h-full w-full max-w-[min(820px,94vw)] flex-col border-l border-zinc-300 bg-white shadow-[-24px_0_48px_-12px_rgba(0,0,0,0.45)] transition-transform duration-300 ease-out dark:border-white/10 dark:bg-[#0c0c0e] ${
+          entered && !closing ? 'translate-x-0' : 'translate-x-full'
+        }`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-table-title"
+      >
+        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-zinc-300 px-6 py-4 dark:border-white/10">
+          <div className="min-w-0 pr-4">
+            <h2 id="edit-table-title" className="text-sm font-semibold tracking-tight text-foreground">
+              Edit Table: <span className="font-medium text-zinc-600 dark:text-zinc-300">{selectedTable}</span>
+            </h2>
+            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+              Rename the table, edit columns, or add and remove fields.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={requestClose}
+            className="shrink-0 rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-white/10 dark:hover:text-white"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div
+          ref={scrollRef}
+          onScroll={(e) => {
+            savedScrollTop.current = e.currentTarget.scrollTop
+          }}
+          className="min-h-0 flex-1 space-y-8 overflow-y-auto px-6 py-6 text-sm custom-scrollbar"
+        >
           {primaryKeyColumns.length === 0 && (
-            <div className="space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-              <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center space-x-2">
-                <KeyRound className="w-5 h-5 text-amber-700 dark:text-amber-300" />
-                <span>Primary key</span>
+            <div className="space-y-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-4">
+              <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <KeyRound className="h-4 w-4 text-amber-600 dark:text-amber-300" />
+                Primary key
               </h3>
-              <p className="text-zinc-600 dark:text-white/60 text-sm">
+              <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
                 Deletes and inline cell edits need a PRIMARY KEY. Tables created without one, or with only UNIQUE
                 constraints, won&apos;t show a key here until you add it.
               </p>
-              <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                <label className="text-sm text-zinc-600 dark:text-white/70 shrink-0">Add PRIMARY KEY on column</label>
-                <select
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <label className="shrink-0 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                  Add PRIMARY KEY on column
+                </label>
+                <AppSelect
+                  className="min-w-0 flex-1"
                   value={primaryKeyColumnToAdd || ''}
-                  onChange={(e) => setPrimaryKeyColumnToAdd(e.target.value || null)}
-                  className="flex-1 min-w-0 px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/20 rounded-md text-zinc-900 dark:text-white text-sm focus:outline-none focus:border-amber-500/50"
-                >
-                  <option value="">Select column…</option>
-                  {tableData.columns
-                    .filter((c: { name: string }) => !columnsToRemove.includes(c.name))
-                    .map((c: { name: string }) => (
-                      <option key={c.name} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                </select>
+                  onChange={(v) => setPrimaryKeyColumnToAdd(v || null)}
+                  placeholder="Select column…"
+                  searchable
+                  searchPlaceholder="Search columns…"
+                  aria-label="Primary key column"
+                  options={[
+                    { value: '', label: 'Select column…' },
+                    ...tableData.columns
+                      .filter((c: { name: string }) => !columnsToRemove.includes(c.name))
+                      .map((c: { name: string }) => ({ value: c.name, label: c.name })),
+                  ]}
+                />
               </div>
-              <p className="text-xs text-amber-800 dark:text-amber-200">
-                Column values must be unique and non-null. If the table already has duplicate or NULLs, PostgreSQL will
-                reject this until you fix data.
-              </p>
             </div>
           )}
 
-          {/* Rename Table */}
-          <div className="space-y-3">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center space-x-2"><Edit2 className="w-5 h-5" /><span>Rename Table</span></h3>
+          <Section title="Rename Table" icon={<Edit2 className="h-3.5 w-3.5 text-zinc-500" />}>
             <div>
-              <label className="block text-sm font-medium text-zinc-600 dark:text-white/70 mb-2">New Table Name</label>
-              <input type="text" value={editTableName} onChange={(e) => setEditTableName(e.target.value)}
-                className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/20 rounded-md text-zinc-900 dark:text-white placeholder:text-zinc-500 dark:text-white/40 focus:outline-none focus:border-zinc-200 dark:border-white/10" placeholder="Enter new table name" />
+              <label className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                New Table Name
+              </label>
+              <input
+                type="text"
+                value={editTableName}
+                onChange={(e) => setEditTableName(e.target.value)}
+                className={`${fieldClass} text-sm`}
+                placeholder="Enter new table name"
+              />
             </div>
-          </div>
+          </Section>
 
-          {/* Edit Existing Columns */}
-          <div className="space-y-3">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center space-x-2"><Edit2 className="w-5 h-5" /><span>Edit Existing Columns</span></h3>
-            {Object.keys(columnsToEdit).length === 0 ? (
-              <p className="text-zinc-600 dark:text-white/50 text-sm mb-4">No columns being edited. Click on a column below to edit it.</p>
-            ) : (
-              <div className="space-y-3 mb-4">
-                {Object.entries(columnsToEdit).map(([originalName, editedCol]) => (
-                  <div key={originalName} className="flex flex-col lg:flex-row gap-3 items-start lg:items-center bg-zinc-100 dark:bg-white/5 rounded-lg p-3 border border-zinc-200 dark:border-white/10">
-                    <div className="flex-1 w-full lg:w-auto min-w-[150px]">
-                      <input type="text" value={editedCol.name} onChange={(e) => onUpdateColumnEdit(originalName, 'name', e.target.value)}
-                        className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/20 rounded-md text-zinc-900 dark:text-white text-sm placeholder:text-zinc-500 dark:text-white/40 focus:outline-none focus:border-zinc-200 dark:border-white/10" placeholder="Column name" />
-                    </div>
-                    <div className="w-full lg:w-auto min-w-[160px]"><TypeSelect value={editedCol.type} onChange={(v) => onUpdateColumnEdit(originalName, 'type', v)} postgresDataTypes={postgresDataTypes} /></div>
-                    {typeNeedsParams(editedCol.type, postgresDataTypes) && (
-                      <div className="w-full lg:w-auto min-w-[200px]">
-                        <input type="text" value={editedCol.typeParams || ''} onChange={(e) => onUpdateColumnEdit(originalName, 'typeParams', e.target.value)} placeholder={getParamLabel(editedCol.type, postgresDataTypes)}
-                          className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/20 rounded-md text-zinc-900 dark:text-white text-sm placeholder:text-zinc-500 dark:text-white/40 focus:outline-none focus:border-zinc-200 dark:border-white/10" title={`Example: ${getTypeExample(editedCol.type, postgresDataTypes)}`} />
-                      </div>
-                    )}
-                    <div className="w-full lg:w-auto min-w-[120px]">
-                      <select value={editedCol.nullable || 'YES'} onChange={(e) => onUpdateColumnEdit(originalName, 'nullable', e.target.value)}
-                        className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/20 rounded-md text-zinc-900 dark:text-white text-sm focus:outline-none focus:border-zinc-200 dark:border-white/10 appearance-none cursor-pointer" style={selectStyle}>
-                        <option value="YES">Nullable</option>
-                        <option value="NO">Not Null</option>
-                      </select>
-                    </div>
-                    <div className="w-full lg:w-auto flex justify-start lg:justify-center">
-                      <button onClick={() => onCancelEditColumn(originalName)} className="p-2 text-red-400 hover:text-red-300 flex-shrink-0 transition-colors"><X className="w-4 h-4" /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="mt-4">
-              <p className="text-zinc-600 dark:text-white/50 text-sm mb-3">Click on a column below to edit it:</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scrollbar">
-                {tableData.columns.map((col: any) => {
-                  if (columnsToEdit[col.name] || columnsToRemove.includes(col.name)) return null
+          <Section
+            title="Edit Existing Columns"
+            icon={<Edit2 className="h-3.5 w-3.5 text-zinc-500" />}
+            description="Click a column to update it in place — the editor opens where you clicked."
+          >
+            <div className="flex flex-col gap-2">
+              {tableData.columns.map((col: { name: string; type: string; key?: string }) => {
+                if (columnsToRemove.includes(col.name)) return null
+
+                const edited = columnsToEdit[col.name]
+                if (edited) {
                   return (
-                    <button key={col.name} onClick={() => onStartEditColumn(col.name)}
-                      className="text-left px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 rounded-lg hover:border-amber-500/50 hover:bg-zinc-200 dark:hover:bg-zinc-100 dark:bg-white/10 transition-all text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="text-zinc-900 dark:text-white font-medium">{col.name}</span>
-                        <Edit2 className="w-3 h-3 text-zinc-600 dark:text-white/40" />
-                      </div>
-                      <div className="text-xs text-zinc-600 dark:text-white/50 mt-1">{col.type}</div>
-                    </button>
+                    <UpdateColumnCard
+                      key={col.name}
+                      originalName={col.name}
+                      isPrimaryKey={col.key === 'PRI' || primaryKeyColumns.includes(col.name)}
+                      editedCol={edited}
+                      postgresDataTypes={postgresDataTypes}
+                      onUpdate={(field, value) => onUpdateColumnEdit(col.name, field, value)}
+                      onCancel={() => rememberScrollAndCancel(col.name)}
+                    />
                   )
-                })}
-              </div>
-            </div>
-          </div>
+                }
 
-          {/* Add New Columns */}
-          <div className="space-y-3">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center space-x-2"><Plus className="w-5 h-5" /><span>Add New Columns</span></h3>
-            {columnsToAdd.length === 0 ? (
-              <p className="text-zinc-600 dark:text-white/50 text-sm mb-4">No columns to add</p>
-            ) : (
-              <div className="space-y-3 mb-4">
-                {columnsToAdd.map((col, idx) => (
-                  <div key={idx} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto_auto] gap-3 items-start lg:items-center bg-zinc-100 dark:bg-white/5 rounded-lg p-3 border border-zinc-200 dark:border-white/10">
-                    <div className="sm:col-span-2 lg:col-span-1">
-                      <input type="text" value={col.name} onChange={(e) => onUpdateNewColumn(idx, 'name', e.target.value)}
-                        className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/20 rounded-md text-zinc-900 dark:text-white text-sm placeholder:text-zinc-500 dark:text-white/40 focus:outline-none focus:border-zinc-200 dark:border-white/10" placeholder="Column name" />
-                    </div>
-                    <div className="sm:col-span-2 lg:col-span-1"><TypeSelect value={col.type} onChange={(v) => onUpdateNewColumn(idx, 'type', v)} postgresDataTypes={postgresDataTypes} /></div>
-                    {typeNeedsParams(col.type, postgresDataTypes) && (
-                      <div className="sm:col-span-2 lg:col-span-1">
-                        <input type="text" value={col.typeParams || ''} onChange={(e) => onUpdateNewColumn(idx, 'typeParams', e.target.value)} placeholder={getParamLabel(col.type, postgresDataTypes)}
-                          className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/20 rounded-md text-zinc-900 dark:text-white text-sm placeholder:text-zinc-500 dark:text-white/40 focus:outline-none focus:border-zinc-200 dark:border-white/10" />
+                return (
+                  <button
+                    key={col.name}
+                    type="button"
+                    onClick={() => rememberScrollAndEdit(col.name)}
+                    className="flex w-full items-center justify-between gap-3 rounded-md border border-zinc-300 bg-zinc-50 px-4 py-3 text-left transition-colors hover:border-blue-500/40 hover:bg-zinc-100 dark:border-white/10 dark:bg-white/[0.04] dark:hover:bg-white/[0.07]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-xs font-medium text-foreground">{col.name}</span>
+                        {col.key === 'PRI' && (
+                          <span className="rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-500 bg-blue-500/15">
+                            PRIMARY KEY
+                          </span>
+                        )}
                       </div>
+                      <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {col.type}
+                      </span>
+                    </div>
+                    <Edit2 className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                  </button>
+                )
+              })}
+            </div>
+          </Section>
+
+          <Section title="Add New Columns" icon={<Plus className="h-3.5 w-3.5 text-zinc-500" />}>
+            {columnsToAdd.length > 0 && (
+              <div className="mb-3 flex flex-col gap-3">
+                {columnsToAdd.map((col, idx) => (
+                  <div
+                    key={idx}
+                    className="rounded-md border border-zinc-300 bg-white px-4 dark:border-white/10 dark:bg-[#121212]"
+                  >
+                    <div className="flex items-center justify-between gap-2 border-b border-zinc-200 py-3 dark:border-white/[0.06]">
+                      <p className="text-xs font-semibold text-foreground">New column</p>
+                      <button
+                        type="button"
+                        onClick={() => onRemoveNewColumn(idx)}
+                        className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                        aria-label="Remove new column"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <FieldRow label="Name" hint="Use lowercase and underscores">
+                      <input
+                        type="text"
+                        value={col.name}
+                        onChange={(e) => onUpdateNewColumn(idx, 'name', e.target.value)}
+                        className={fieldClass}
+                        placeholder="column_name"
+                      />
+                    </FieldRow>
+                    <FieldRow label="Type">
+                      <PostgresTypePicker
+                        value={col.type}
+                        onChange={(v) => onUpdateNewColumn(idx, 'type', v)}
+                        postgresDataTypes={postgresDataTypes}
+                      />
+                    </FieldRow>
+                    {typeNeedsParams(col.type, postgresDataTypes) && (
+                      <FieldRow label={getParamLabel(col.type, postgresDataTypes) || 'Parameters'}>
+                        <input
+                          type="text"
+                          value={col.typeParams || ''}
+                          onChange={(e) => onUpdateNewColumn(idx, 'typeParams', e.target.value)}
+                          placeholder={getParamLabel(col.type, postgresDataTypes)}
+                          className={fieldClass}
+                        />
+                      </FieldRow>
                     )}
-                    <div className="sm:col-span-1 lg:col-span-1">
-                      <select value={col.nullable || 'YES'} onChange={(e) => onUpdateNewColumn(idx, 'nullable', e.target.value)}
-                        className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/20 rounded-md text-zinc-900 dark:text-white text-sm focus:outline-none focus:border-zinc-200 dark:border-white/10 appearance-none cursor-pointer" style={selectStyle}>
-                        <option value="YES">Nullable</option>
-                        <option value="NO">Not Null</option>
-                      </select>
-                    </div>
-                    <div className="sm:col-span-1 lg:col-span-1 flex justify-start">
-                      <button onClick={() => onRemoveNewColumn(idx)} className="p-2 text-red-400 hover:text-red-300 flex-shrink-0 transition-colors"><X className="w-4 h-4" /></button>
-                    </div>
+                    <Toggle
+                      checked={(col.nullable || 'YES') === 'YES'}
+                      onChange={(next) => onUpdateNewColumn(idx, 'nullable', next ? 'YES' : 'NO')}
+                      label="Allow Nullable"
+                      description="Allow the column to assume a NULL value if no value is provided"
+                    />
                   </div>
                 ))}
               </div>
             )}
-            <Button onClick={onAddNewColumn} variant="outline" size="sm" className="border-zinc-200 dark:border-white/20 text-zinc-900 dark:text-white hover:bg-zinc-200 dark:hover:bg-zinc-100 dark:bg-white/10"><Plus className="w-4 h-4 mr-2" /> Add Column</Button>
-          </div>
+            <Button
+              onClick={onAddNewColumn}
+              variant="outline"
+              size="sm"
+              className="h-8 rounded-md border-zinc-300 px-3 text-xs text-foreground hover:bg-zinc-100 dark:border-white/15 dark:hover:bg-white/[0.06]"
+            >
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Column
+            </Button>
+          </Section>
 
-          {/* Remove Columns */}
-          <div className="space-y-3">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center space-x-2"><Trash2 className="w-5 h-5" /><span>Remove Columns</span></h3>
-            <p className="text-zinc-600 dark:text-white/50 text-sm mb-4">Select columns to remove from the table</p>
-            <div className="space-y-2">
-              {tableData.columns.map((col: any) => (
-                <label key={col.name} className={`flex items-center space-x-3 p-3 rounded-lg border transition-all cursor-pointer ${columnsToRemove.includes(col.name) ? 'bg-red-500/10 border-red-500/50' : 'bg-zinc-100 dark:bg-white/5 border-zinc-200 dark:border-white/10 hover:border-zinc-200 dark:border-white/30'}`}>
-                  <input type="checkbox" checked={columnsToRemove.includes(col.name)} onChange={() => onToggleColumnRemoval(col.name)} className="w-4 h-4 rounded border-zinc-200 dark:border-white/20" />
-                  <div className="flex-1">
-                    <span className="text-zinc-900 dark:text-white font-medium">{col.name}</span>
-                    <span className="text-zinc-600 dark:text-white/50 ml-2 text-xs">{col.type}</span>
-                    {col.key === 'PRI' && <span className="ml-2 px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded">PRIMARY KEY</span>}
+          <Section
+            title="Remove Columns"
+            icon={<Trash2 className="h-3.5 w-3.5 text-zinc-500" />}
+            description="Select columns to remove from the table."
+          >
+            <div className="flex flex-col gap-2">
+              {tableData.columns.map((col: { name: string; type: string; key?: string }) => (
+                <label
+                  key={col.name}
+                  className={`flex cursor-pointer items-center gap-3 rounded-md border px-4 py-3 transition-colors ${
+                    columnsToRemove.includes(col.name)
+                      ? 'border-red-500/40 bg-red-500/10'
+                      : 'border-zinc-300 bg-zinc-50 hover:border-zinc-400 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/20'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={columnsToRemove.includes(col.name)}
+                    onChange={() => onToggleColumnRemoval(col.name)}
+                    className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-white/20"
+                  />
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-foreground">{col.name}</span>
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">{col.type}</span>
+                    {col.key === 'PRI' && (
+                      <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-500">
+                        PRIMARY KEY
+                      </span>
+                    )}
                   </div>
                 </label>
               ))}
             </div>
             {columnsToRemove.length > 0 && (
-              <div className="mt-4 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
-                <p className="text-amber-700 dark:text-amber-200 text-sm">Warning: Removing columns will permanently delete all data in those columns. This action cannot be undone.</p>
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+                <p className="text-xs leading-relaxed text-amber-700 dark:text-amber-200">
+                  Warning: Removing columns will permanently delete all data in those columns. This action cannot be
+                  undone.
+                </p>
               </div>
             )}
-          </div>
+          </Section>
         </div>
 
-        <div className="p-6 border-t border-zinc-200 dark:border-white/10 flex justify-end gap-3">
-          <Button variant="outline" onClick={onClose} className="border-zinc-200 dark:border-white/20 text-zinc-900 dark:text-white hover:bg-zinc-200 dark:hover:bg-zinc-100 dark:bg-white/10" disabled={editingTable}>Cancel</Button>
-          <Button onClick={onApply} className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={editingTable || !hasChanges}>
-            {editingTable ? 'Applying...' : 'Apply Changes'}
-          </Button>
-        </div>
-      </div>
+        <footer className="shrink-0 border-t border-zinc-300 px-6 py-3.5 dark:border-white/10">
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={requestClose}
+              className="h-8 rounded-md border-zinc-300 px-3 text-xs text-foreground hover:bg-zinc-100 dark:border-white/15 dark:hover:bg-white/[0.06]"
+              disabled={editingTable}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={onApply}
+              className="h-8 rounded-md bg-blue-500 px-3 text-xs text-white shadow-sm hover:bg-blue-600 disabled:opacity-50"
+              disabled={editingTable || !hasChanges}
+            >
+              {editingTable ? 'Applying...' : 'Apply Changes'}
+            </Button>
+          </div>
+        </footer>
+      </aside>
     </div>
   )
 }
