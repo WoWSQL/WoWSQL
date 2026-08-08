@@ -1,8 +1,8 @@
-# WoWSQL Self-Hosted — end-user stack (pull from Docker Hub)
+# WoWSQL Self-Hosted - end-user stack (pull from Docker Hub)
 # Usage: cp .env.example .env && docker compose pull && docker compose up -d
 
 services:
-  # ─── PostgreSQL 18 ──────────────────────────────────────
+  # --- PostgreSQL 18 --------------------------------------
   db:
     image: wowsql/postgres:18
     container_name: wowsql-db
@@ -27,7 +27,7 @@ services:
       retries: 10
       start_period: 10s
 
-  # ─── Redis ──────────────────────────────────────────────
+  # --- Redis ----------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: wowsql-redis
@@ -44,7 +44,7 @@ services:
       timeout: 3s
       retries: 5
 
-  # ─── PostgREST (REST API from your tables) ─────────────
+  # --- PostgREST (REST API from your tables) -------------
   rest:
     image: postgrest/postgrest:v12.2.0
     container_name: wowsql-rest
@@ -62,7 +62,7 @@ services:
     networks:
       - wowsql
 
-  # ─── WoWSQL Auth ───────────────────────────────────────
+  # --- WoWSQL Auth ---------------------------------------
   auth:
     image: wowsql/auth:latest
     container_name: wowsql-auth
@@ -89,7 +89,7 @@ services:
       retries: 5
       start_period: 15s
 
-  # ─── WoWSQL Storage (Postgres BYTEA) ───────────────────
+  # --- WoWSQL Storage (Postgres BYTEA) -------------------
   storage:
     image: wowsql/storage:latest
     container_name: wowsql-storage
@@ -113,7 +113,7 @@ services:
       retries: 5
       start_period: 15s
 
-  # ─── WoWSQL Realtime (LISTEN/NOTIFY) ───────────────────
+  # --- WoWSQL Realtime (LISTEN/NOTIFY) -------------------
   realtime:
     image: wowsql/realtime:latest
     container_name: wowsql-realtime
@@ -142,7 +142,7 @@ services:
       retries: 5
       start_period: 15s
 
-  # ─── Mini Backend (Dashboard Auth + DB Ops) ────────────
+  # --- Mini Backend (Dashboard Auth + DB Ops) ------------
   backend:
     image: wowsql/self-backend:latest
     container_name: wowsql-backend
@@ -164,7 +164,7 @@ services:
       retries: 5
       start_period: 10s
 
-  # ─── Kong API Gateway ───────────────────────────────────
+  # --- Kong API Gateway -----------------------------------
   kong:
     image: kong:3.9
     container_name: wowsql-kong
@@ -190,7 +190,7 @@ services:
     networks:
       - wowsql
 
-  # ─── WoWSQL Studio (Dashboard) ─────────────────────────
+  # --- WoWSQL Studio (Dashboard) -------------------------
   studio:
     image: wowsql/studio:latest
     container_name: wowsql-studio
@@ -210,4 +210,3 @@ networks:
 volumes:
   db-data:
   redis-data:
-}
