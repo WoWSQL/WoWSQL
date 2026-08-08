@@ -127,11 +127,11 @@ Replace `YOUR_ANON_KEY` with the `ANON_KEY` value from your `.env` file.
 | Container | Port | Purpose |
 |-----------|------|---------|
 | `wowsql-db` | 5432 | PostgreSQL 18 with extensions |
-| `wowsql-redis` | 6379 | Cache + pub/sub for Realtime |
+| `wowsql-redis` | 6379 | Optional cache |
 | `wowsql-rest` | (internal) | PostgREST — auto REST API |
-| `wowsql-auth` | (internal) | Authentication + RLS |
-| `wowsql-storage` | (internal) | File storage service |
-| `wowsql-realtime` | (internal) | WebSocket subscriptions |
+| `wowsql-auth` | (internal) | Auth — built from `services/wowsql-auth` |
+| `wowsql-storage` | (internal) | Storage — built from `services/wowsql-storage` (Postgres BYTEA) |
+| `wowsql-realtime` | (internal) | Realtime — built from `services/wowsql-realtime` (LISTEN/NOTIFY) |
 | `wowsql-backend` | (internal) | Dashboard auth (login/register) |
 | `wowsql-kong` | 8080 | API gateway (single entry point) |
 | `wowsql-studio` | 3000 | Dashboard UI |
