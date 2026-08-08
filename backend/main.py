@@ -17,6 +17,7 @@ import jwt
 from fastapi import FastAPI, Request, Response, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from auth_admin import create_auth_admin_router, ensure_auth_admin_schema
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,7 @@ async def startup():
             # Sync JWT secret into auth.config
             try:
                 async with pool.acquire() as conn:
+                    await ensure_auth_admin_schema(conn)
                     await conn.execute("""
                         UPDATE auth.config SET jwt_secret = $1 WHERE project_id = 'default'
                     """, JWT_SECRET)
@@ -707,9 +709,13 @@ async def update_auth_user(slug: str, user_id: str, request: Request, body: dict
     _get_current_user(request)
     async with pool.acquire() as conn:
         if "is_banned" in body:
-            reason = body.get("banned_reason", None)
+            reason = body.get("ban_reason", body.get("banned_reason", None))
             await conn.execute(
-                "UPDATE auth.users SET is_banned = $1, banned_reason = $2 WHERE id = $3",
+                """UPDATE auth.users
+                   SET is_banned = $1,
+                       banned_reason = $2,
+                       banned_at = CASE WHEN $1 THEN NOW() ELSE NULL END
+                   WHERE id = $3""",
                 body["is_banned"], reason, user_id
             )
     return {"success": True}
@@ -838,161 +844,18 @@ async def disable_realtime(request: Request, schema: str = "public", table: str 
     return {"success": True, "message": f"Realtime disabled for {schema}.{table}"}
 
 
-# ── Auth Config & Status Endpoints ────────────────────────────────────────────
+# ── Auth admin (cloud-compatible Studio APIs) ─────────────────────────────────
 
-@app.get("/api/v1/projects/{slug}/auth/status")
-async def get_auth_status(slug: str, request: Request):
-    _get_current_user(request)
-    async with pool.acquire() as conn:
-        exists = await conn.fetchval("""
-            SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'config')
-        """)
-        if not exists:
-            return {"enabled": False}
-        row = await conn.fetchrow("SELECT enable_signup FROM auth.config WHERE project_id = 'default'")
-        return {"enabled": row is not None}
+def _get_pool():
+    return pool
 
 
-@app.get("/api/v1/projects/{slug}/auth/config")
-async def get_auth_config(slug: str, request: Request):
-    _get_current_user(request)
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT enable_signup, email_password_enabled, email_confirmation_required,
-                   jwt_expiry_hours, refresh_token_expiry_days, site_url, auth_service_name
-            FROM auth.config WHERE project_id = 'default'
-        """)
-        if not row:
-            return {
-                "enable_signup": True,
-                "email_password_enabled": True,
-                "email_confirmation_required": False,
-                "jwt_expiry_hours": 24,
-                "refresh_token_expiry_days": 7,
-                "site_url": "http://localhost:8080",
-                "auth_service_name": "WoWSQL Auth",
-                "redirect_urls": "",
-            }
-        return {
-            "enable_signup": row["enable_signup"],
-            "email_password_enabled": row["email_password_enabled"],
-            "email_confirmation_required": row["email_confirmation_required"],
-            "jwt_expiry_hours": row["jwt_expiry_hours"],
-            "refresh_token_expiry_days": row["refresh_token_expiry_days"],
-            "site_url": row["site_url"] or "http://localhost:8080",
-            "auth_service_name": row["auth_service_name"] or "WoWSQL Auth",
-            "redirect_urls": "",
-        }
+def _get_api_keys():
+    return ANON_KEY, SERVICE_ROLE_KEY
 
 
-@app.put("/api/v1/projects/{slug}/auth/config")
-async def update_auth_config(slug: str, request: Request, body: dict = {}):
-    _get_current_user(request)
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE auth.config SET
-                enable_signup = COALESCE($1, enable_signup),
-                email_password_enabled = COALESCE($2, email_password_enabled),
-                email_confirmation_required = COALESCE($3, email_confirmation_required),
-                jwt_expiry_hours = COALESCE($4, jwt_expiry_hours),
-                refresh_token_expiry_days = COALESCE($5, refresh_token_expiry_days),
-                site_url = COALESCE($6, site_url),
-                auth_service_name = COALESCE($7, auth_service_name),
-                updated_at = NOW()
-            WHERE project_id = 'default'
-        """,
-            body.get("enable_signup"),
-            body.get("email_password_enabled"),
-            body.get("email_confirmation_required"),
-            body.get("jwt_expiry_hours"),
-            body.get("refresh_token_expiry_days"),
-            body.get("site_url"),
-            body.get("auth_service_name"),
-        )
-    return {"success": True}
-
-
-@app.get("/api/v1/projects/{slug}/auth/providers")
-async def get_auth_providers(slug: str, request: Request):
-    _get_current_user(request)
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT email_password_enabled, anonymous_enabled,
-                   google_enabled, google_client_id, google_client_secret,
-                   github_enabled, github_client_id, github_client_secret
-            FROM auth.config WHERE project_id = 'default'
-        """)
-        if not row:
-            return {
-                "email_enabled": True, "anonymous_enabled": False,
-                "google_enabled": False, "google_client_id": "", "google_client_secret": "",
-                "github_enabled": False, "github_client_id": "", "github_client_secret": "",
-            }
-        return {
-            "email_enabled": row["email_password_enabled"],
-            "anonymous_enabled": row["anonymous_enabled"] or False,
-            "google_enabled": row["google_enabled"] or False,
-            "google_client_id": row["google_client_id"] or "",
-            "google_client_secret": row["google_client_secret"] or "",
-            "github_enabled": row["github_enabled"] or False,
-            "github_client_id": row["github_client_id"] or "",
-            "github_client_secret": row["github_client_secret"] or "",
-        }
-
-
-@app.put("/api/v1/projects/{slug}/auth/providers")
-async def update_auth_providers(slug: str, request: Request, body: dict = {}):
-    _get_current_user(request)
-    async with pool.acquire() as conn:
-        updates = []
-        params = []
-        idx = 1
-        field_map = {
-            "email_enabled": "email_password_enabled",
-            "anonymous_enabled": "anonymous_enabled",
-            "google_enabled": "google_enabled",
-            "google_client_id": "google_client_id",
-            "google_client_secret": "google_client_secret",
-            "github_enabled": "github_enabled",
-            "github_client_id": "github_client_id",
-            "github_client_secret": "github_client_secret",
-        }
-        for body_key, col_name in field_map.items():
-            if body_key in body:
-                updates.append(f"{col_name} = ${idx}")
-                params.append(body[body_key])
-                idx += 1
-        if updates:
-            params.append("default")
-            query = f"UPDATE auth.config SET {', '.join(updates)}, updated_at = NOW() WHERE project_id = ${idx}"
-            await conn.execute(query, *params)
-    return {"success": True}
-
-
-@app.get("/api/v1/projects/{slug}/auth/audit-logs")
-async def get_auth_audit_logs(slug: str, request: Request, limit: int = 50):
-    _get_current_user(request)
-    async with pool.acquire() as conn:
-        exists = await conn.fetchval("""
-            SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'audit_logs')
-        """)
-        if not exists:
-            return {"logs": []}
-        rows = await conn.fetch("""
-            SELECT id, user_id, event_type, event_status, ip_address, created_at
-            FROM auth.audit_logs WHERE project_id = 'default'
-            ORDER BY created_at DESC LIMIT $1
-        """, limit)
-        return {"logs": [
-            {
-                "id": str(r["id"]),
-                "user_id": str(r["user_id"]) if r["user_id"] else None,
-                "event_type": r["event_type"],
-                "event_status": r["event_status"] or "success",
-                "ip_address": r["ip_address"],
-                "created_at": str(r["created_at"]),
-            }
-            for r in rows
-        ]}
+app.include_router(
+    create_auth_admin_router(_get_pool, _get_current_user, _get_api_keys)
+)
 
 

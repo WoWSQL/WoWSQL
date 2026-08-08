@@ -15,6 +15,11 @@ All notable changes to the WoWSQL self-hosted setup will be documented here.
 - Auth, Storage, and Realtime now build from monorepo `services/wowsql-*` (same code as cloud)
 - Storage uses Postgres BYTEA (no filesystem volume); Realtime uses LISTEN/NOTIFY with `PG_*` env
 
+### Auth Studio parity
+
+- Ported live Auth UI (Providers, Email, Policies, Sessions, MFA, Rate Limits, Hooks, Attack Protection, Performance, Disable)
+- Extended self-hosted backend with cloud-compatible auth admin APIs (`PATCH /auth/config`, oauth-providers, sessions, stats)
+
 ## [1.0.0] - 2026-06-12
 
 ### Initial Release

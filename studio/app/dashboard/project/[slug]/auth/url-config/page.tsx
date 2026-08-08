@@ -1,87 +1,123 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useParams } from 'next/navigation'
-import { Link2, Save, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import { Link2, Save, RefreshCw, Copy, CheckCircle, ExternalLink } from 'lucide-react'
 import api from '@/lib/api'
+import { API_URL } from '@/lib/constants'
+import { PageSkeleton } from '@/components/Skeleton'
 
-export default function UrlConfigPage() {
+export default function URLConfigPage() {
   const params = useParams()
   const slug = params.slug as string
-  const [siteUrl, setSiteUrl] = useState('http://localhost:8080')
-  const [redirectUrls, setRedirectUrls] = useState('')
+  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null)
+  const [frontendUrl, setFrontendUrl] = useState('')
+  const [copied, setCopied] = useState<string | null>(null)
 
-  const showToast = (msg: string, ok: boolean) => {
-    setToast({ msg, ok })
-    setTimeout(() => setToast(null), 3000)
+  const apiDomain = useMemo(() => {
+    return API_URL.replace('https://', '').replace('http://', '').replace('apis.', '').replace(':8000', '').split('/')[0]
+  }, [])
+
+  const authBaseUrl = `https://${slug}.${apiDomain}/api/auth`
+
+  useEffect(() => { loadConfig() }, [slug])
+
+  const loadConfig = async () => {
+    setLoading(true)
+    try {
+      const res = await api.get(`/api/v1/projects/${slug}/auth/status`)
+      if (res.data.config) {
+        setFrontendUrl(res.data.config.frontend_url || '')
+      }
+    } catch { }
+    finally { setLoading(false) }
   }
 
-  useEffect(() => {
-    api.get(`/api/v1/projects/${slug}/auth/config`).then(res => {
-      setSiteUrl(res.data.site_url || 'http://localhost:8080')
-      setRedirectUrls(res.data.redirect_urls || '')
-    }).catch(() => {})
-  }, [slug])
-
-  const save = async () => {
+  const handleSave = async () => {
     setSaving(true)
     try {
-      await api.put(`/api/v1/projects/${slug}/auth/config`, { site_url: siteUrl, redirect_urls: redirectUrls })
-      showToast('URL configuration saved', true)
-    } catch {
-      showToast('Failed to save', false)
-    }
-    setSaving(false)
+      await api.patch(`/api/v1/projects/${slug}/auth/config`, { frontend_url: frontendUrl.trim() || null })
+      await loadConfig()
+    } catch (err: any) { alert(err.response?.data?.detail || 'Failed to save.') }
+    finally { setSaving(false) }
   }
 
-  const inp = "px-3 py-2.5 rounded-lg bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white text-sm focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+  const copyToClipboard = (val: string, label: string) => {
+    navigator.clipboard.writeText(val)
+    setCopied(label)
+    setTimeout(() => setCopied(null), 2000)
+  }
+
+  if (loading) return <PageSkeleton variant="form" />
+
+  const endpoints = [
+    { label: 'Sign Up', path: '/signup' },
+    { label: 'Sign In', path: '/login' },
+    { label: 'Reset Password', path: '/reset-password' },
+    { label: 'Get User', path: '/me' },
+    { label: 'Refresh Token', path: '/refresh' },
+    { label: 'Sign Out', path: '/logout' },
+  ]
 
   return (
-    <div className="p-6 lg:p-8 max-w-3xl mx-auto">
-      {toast && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg
-          ${toast.ok ? 'bg-gradient-to-r from-blue-500 via-violet-500 to-pink-500 text-white' : 'bg-red-600 text-white'}`}>
-          {toast.ok ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-          {toast.msg}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-            <Link2 className="w-6 h-6 text-purple-400" />
-            URL Configuration
-          </h1>
-          <p className="text-zinc-600 dark:text-white/40 text-sm mt-1">Configure redirect URLs and site settings</p>
-        </div>
-        <button onClick={save} disabled={saving}
-          className="px-4 py-2 text-sm font-medium bg-gradient-to-r from-blue-500 via-violet-500 to-pink-500 hover:opacity-90 text-white rounded-lg flex items-center gap-2 shadow-sm disabled:opacity-50">
-          {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Save
-        </button>
+    <div className="p-6 lg:p-8 max-w-3xl mx-auto w-full">
+      <div className="mb-8">
+        <h1 className="text-sm font-semibold text-foreground">URL Configuration</h1>
+        <p className="text-zinc-600 dark:text-white/50 text-sm mt-1">Configure redirect URLs and view your auth API endpoints</p>
       </div>
 
-      <div className="space-y-6">
-        <section className="border border-zinc-200 dark:border-white/10 rounded-xl p-6 bg-white dark:bg-white/[0.02]">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Site URL</h2>
-          <input type="text" value={siteUrl} onChange={e => setSiteUrl(e.target.value)}
-            className={'w-full ' + inp} placeholder="https://yourdomain.com" />
-          <p className="text-xs text-zinc-600 dark:text-white/30 mt-2">
-            The base URL of your site. Used in email templates for verification links and password resets.
+      <section className="mb-8">
+        <h2 className="text-sm font-medium text-foreground mb-4">Frontend URL</h2>
+        <div className="border border-zinc-300 dark:border-white/10 rounded-md p-5 space-y-4">
+          <p className="text-sm text-zinc-600 dark:text-white/60">
+            Configure where users are redirected after email verification, magic links, and password resets.
+            Leave empty to show a success page instead of redirecting.
           </p>
-        </section>
+          <div>
+            <label className="text-xs text-zinc-600 dark:text-white/50 mb-1.5 block">Frontend URL (Optional)</label>
+            <input type="url" value={frontendUrl} onChange={e => setFrontendUrl(e.target.value)}
+            className="w-full px-3 py-2.5 rounded-md bg-zinc-100 dark:bg-white/5 border border-zinc-300 dark:border-white/10 text-foreground text-sm focus:outline-none focus:border-zinc-300 dark:border-white/10"
+              placeholder="https://your-app.com" />
+            {frontendUrl && (
+              <p className="text-xs text-zinc-600 dark:text-white/40 mt-1.5">
+                Users will be redirected to <span className="text-zinc-600 dark:text-white/70">{frontendUrl}/auth/verified</span> after email verification
+              </p>
+            )}
+          </div>
+          <div className="flex justify-end">
+            <button onClick={handleSave} disabled={saving}
+            className="px-4 py-2 text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-all disabled:opacity-50 flex items-center gap-2 shadow-sm">
+              {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              Save
+            </button>
+          </div>
+        </div>
+      </section>
 
-        <section className="border border-zinc-200 dark:border-white/10 rounded-xl p-6 bg-white dark:bg-white/[0.02]">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Redirect URLs</h2>
-          <textarea value={redirectUrls} onChange={e => setRedirectUrls(e.target.value)}
-            className={'w-full h-32 ' + inp} placeholder="http://localhost:3000&#10;https://yourdomain.com/callback" />
-          <p className="text-xs text-zinc-600 dark:text-white/30 mt-2">
-            Allowed redirect URLs after authentication (one per line). Used for OAuth callbacks and magic links.
-          </p>
-        </section>
-      </div>
+      <section>
+        <h2 className="text-sm font-medium text-foreground mb-4">Auth API Endpoints</h2>
+        <div className="border border-zinc-300 dark:border-white/10 rounded-md overflow-hidden divide-y divide-white/10">
+          {endpoints.map(ep => {
+            const url = `${authBaseUrl}${ep.path}`
+            return (
+              <div key={ep.path} className="flex items-center justify-between p-4 hover:bg-zinc-200 dark:bg-white/5 dark:hover:bg-white/10 transition-colors">
+                <div>
+                  <p className="text-sm font-medium text-foreground">{ep.label}</p>
+                  <p className="text-xs text-zinc-600 dark:text-white/40 font-mono mt-0.5">{url}</p>
+                </div>
+                <button onClick={() => copyToClipboard(url, ep.path)}
+                  className="p-2 rounded-md text-zinc-600 dark:text-white/40 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200 dark:bg-white/5 dark:hover:bg-white/10 transition-colors">
+                  {copied === ep.path ? <CheckCircle className="w-4 h-4 text-blue-500 dark:text-blue-400" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <p className="text-xs text-zinc-600 dark:text-white/40 mt-3">
+          Client apps should call these endpoints via the project subdomain <span className="text-zinc-600 dark:text-white/60 font-semibold">{slug}.{apiDomain}</span>
+        </p>
+      </section>
     </div>
   )
 }
