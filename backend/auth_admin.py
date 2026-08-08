@@ -125,6 +125,19 @@ DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS ses_access_key VARC
 DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS ses_secret_key VARCHAR(500) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS ses_region VARCHAR(50) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
+-- Self-host uses project_id = 'default' (text). wowsql-auth migrations may create UUID columns.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'auth' AND table_name = 'providers_config'
+      AND column_name = 'project_id' AND data_type = 'uuid'
+  ) THEN
+    ALTER TABLE auth.providers_config
+      ALTER COLUMN project_id TYPE VARCHAR(255) USING project_id::text;
+  END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
 -- Sync legacy columns into cloud-compatible names when present
 UPDATE auth.config SET
   allow_signup = COALESCE(allow_signup, enable_signup, TRUE),
@@ -204,7 +217,7 @@ def _config_public(row: Dict[str, Any], anon_key: str = "", service_key: str = "
         anon = row.get("anonymous_enabled", False)
 
     return {
-        "enabled": bool(row.get("auth_enabled", True)),
+        "enabled": row.get("auth_enabled") is not False,
         "jwt_secret_set": bool(row.get("jwt_secret")),
         "jwt_expiry_hours": row.get("jwt_expiry_hours", 24),
         "refresh_token_expiry_days": row.get("refresh_token_expiry_days", 30),
@@ -279,12 +292,15 @@ def create_auth_admin_router(get_pool, get_current_user, get_api_keys) -> APIRou
             row = await _load_config_row(conn)
             if not row:
                 return {"enabled": False, "message": "Auth is not configured"}
-            enabled = bool(row.get("auth_enabled", True))
+            enabled = row.get("auth_enabled") is not False
             if not enabled:
                 return {"enabled": False, "message": "Authentication is disabled"}
             anon_key, service_key = get_api_keys()
             config = _config_public(row, anon_key, service_key)
-            oauth = await _load_oauth_providers(conn)
+            try:
+                oauth = await _load_oauth_providers(conn)
+            except Exception:
+                oauth = []
             return {"enabled": True, "config": config, "oauth_providers": oauth}
 
     @router.get("/api/v1/projects/{slug}/auth/config")

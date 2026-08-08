@@ -10,6 +10,7 @@ import {
 import api from '@/lib/api'
 import { API_URL } from '@/lib/constants'
 import { PageSkeleton } from '@/components/Skeleton'
+import { useAuthLayout } from '../layout'
 
 interface AuthConfig {
   enabled: boolean
@@ -99,11 +100,12 @@ function ProviderIcon({ logo, emoji, bg, name, size = 36 }: {
 export default function ProvidersPage() {
   const params = useParams()
   const slug = params.slug as string
+  const { authEnabled: layoutAuthEnabled } = useAuthLayout()
   const [tab, setTab] = useState<'wowsql' | 'thirdparty'>('wowsql')
   const [config, setConfig] = useState<AuthConfig | null>(null)
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([])
   const [loading, setLoading] = useState(true)
-  const [authEnabled, setAuthEnabled] = useState(false)
+  const [authEnabled, setAuthEnabled] = useState(true)
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null)
   const [savingField, setSavingField] = useState<string | null>(null)
   const [providerForms, setProviderForms] = useState<Record<string, { client_id: string; client_secret: string; redirect_uri: string; scopes: string }>>({})
@@ -154,7 +156,9 @@ export default function ProvidersPage() {
     try {
       const res = await api.get(`/api/v1/projects/${slug}/auth/status`)
       const d = res.data
-      setAuthEnabled(!!d.enabled)
+      // Layout already gated auth; only mark disabled on an explicit false from API
+      const enabled = d.enabled !== false && (layoutAuthEnabled !== false)
+      setAuthEnabled(enabled)
       if (d.config) {
         setConfig(d.config)
         setSignupToggles({
@@ -165,8 +169,10 @@ export default function ProvidersPage() {
         })
       }
       setOauthProviders(d.oauth_providers || [])
-    } catch { setAuthEnabled(false) }
-    finally { setLoading(false) }
+    } catch {
+      // Keep page usable when layout already confirmed auth is on
+      setAuthEnabled(layoutAuthEnabled !== false)
+    } finally { setLoading(false) }
   }
 
   const isProviderEnabled = (providerId: string) => {
