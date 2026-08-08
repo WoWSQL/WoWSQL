@@ -43,8 +43,8 @@ All running locally on your machine. No cloud account needed. No data leaves you
 ### 1. Clone this repo
 
 ```bash
-git clone https://github.com/WoWSQL/wowsql.git
-cd wowsql/docker
+git clone https://github.com/WoWSQL/WoWSQL.git
+cd WoWSQL/docker
 ```
 
 ### 2. Configure environment
@@ -57,13 +57,14 @@ Open `.env` and change at minimum:
 - `POSTGRES_PASSWORD` — your database password
 - `JWT_SECRET` — at least 32 characters, used for API authentication
 
-### 3. Start everything
+### 3. Pull images & start
 
 ```bash
+docker compose pull
 docker compose up -d
 ```
 
-That's it. Wait ~30 seconds for all services to become healthy.
+That's it. Wait ~30 seconds for all services to become healthy. Images come from [Docker Hub](https://hub.docker.com/u/wowsql) — no local build required.
 
 ### 4. Open the Dashboard
 
@@ -72,6 +73,14 @@ Visit **http://localhost:3000** in your browser.
 On first launch you'll be prompted to create an admin account (email + password). This is your single admin user for the self-hosted instance.
 
 ### 5. Use the REST API
+
+API keys are **auto-generated** from your `JWT_SECRET` on first boot. Copy the anon key from the dashboard (project API keys) or:
+
+```bash
+curl -s http://localhost:8080/api/v1/projects/default/api-keys \
+  -H "Cookie: access_token=YOUR_LOGIN_COOKIE" 
+# → { "anon_key": "...", "service_role_key": "..." }
+```
 
 ```bash
 # List all tables
@@ -88,8 +97,6 @@ curl http://localhost:8080/rest/v1/todos \
   -H "Content-Type: application/json" \
   -d '{"title": "Hello from WoWSQL!"}'
 ```
-
-Replace `YOUR_ANON_KEY` with the `ANON_KEY` value from your `.env` file.
 
 ---
 
@@ -129,10 +136,10 @@ Replace `YOUR_ANON_KEY` with the `ANON_KEY` value from your `.env` file.
 | `wowsql-db` | 5432 | PostgreSQL 18 with extensions |
 | `wowsql-redis` | 6379 | Optional cache |
 | `wowsql-rest` | (internal) | PostgREST — auto REST API |
-| `wowsql-auth` | (internal) | Auth — built from `services/wowsql-auth` |
-| `wowsql-storage` | (internal) | Storage — built from `services/wowsql-storage` (Postgres BYTEA) |
-| `wowsql-realtime` | (internal) | Realtime — built from `services/wowsql-realtime` (LISTEN/NOTIFY) |
-| `wowsql-backend` | (internal) | Dashboard auth (login/register) |
+| `wowsql-auth` | (internal) | Auth (`wowsql/auth`) |
+| `wowsql-storage` | (internal) | Storage (`wowsql/storage`, Postgres BYTEA) |
+| `wowsql-realtime` | (internal) | Realtime (`wowsql/realtime`) |
+| `wowsql-backend` | (internal) | Dashboard API (`wowsql/self-backend`) |
 | `wowsql-kong` | 8080 | API gateway (single entry point) |
 | `wowsql-studio` | 3000 | Dashboard UI |
 
@@ -146,9 +153,7 @@ All configuration is in the `.env` file:
 |----------|----------|-------------|
 | `POSTGRES_PASSWORD` | Yes | Database superuser password |
 | `JWT_SECRET` | Yes | JWT signing key (min 32 chars) |
-| `ANON_KEY` | Yes | Public API key for anonymous access |
-| `SERVICE_ROLE_KEY` | Yes | Admin API key (bypasses RLS) |
-| `AUTHENTICATOR_PASSWORD` | No | PostgREST db role password |
+| `AUTHENTICATOR_PASSWORD` | No | PostgREST db role password (must match init SQL) |
 | `API_EXTERNAL_URL` | No | Kong URL if behind reverse proxy |
 | `STUDIO_EXTERNAL_URL` | No | Dashboard URL if behind reverse proxy |
 

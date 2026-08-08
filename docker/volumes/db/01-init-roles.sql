@@ -32,6 +32,6 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT USAGE, SELECT ON SEQUENCES TO authenticated, service_role;
+  GRANT USAGE, SELECT ON SEQUENCES TO anon, authenticated, service_role;
 
 DO $$ BEGIN RAISE NOTICE 'WoWSQL: Roles and extensions initialized'; END $$;

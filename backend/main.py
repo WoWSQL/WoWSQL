@@ -462,13 +462,15 @@ async def query_table(table_name: str, body: QueryRequest, request: Request, sch
         direction = "DESC" if body.sort_direction == "desc" else "ASC"
         order_clause = f'ORDER BY "{body.sort_column}" {direction}'
 
+    limit_idx = param_idx
+    offset_idx = param_idx + 1
     async with pool.acquire() as conn:
         total = await conn.fetchval(
             f'SELECT COUNT(*) FROM "{schema}"."{table_name}" WHERE {where_sql}',
             *params
         )
         rows = await conn.fetch(
-            f'SELECT * FROM "{schema}"."{table_name}" WHERE {where_sql} {order_clause} LIMIT ${{param_idx}} OFFSET ${{param_idx + 1}}'.format(param_idx=param_idx, **{}),
+            f'SELECT * FROM "{schema}"."{table_name}" WHERE {where_sql} {order_clause} LIMIT ${limit_idx} OFFSET ${offset_idx}',
             *params, body.limit or 100, body.offset or 0
         )
 

@@ -49,9 +49,17 @@ CREATE TABLE IF NOT EXISTS public.todos (
 
 ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
 
+-- Table + sequence grants (PostgREST roles)
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.todos TO anon, authenticated, service_role;
+GRANT USAGE, SELECT ON SEQUENCE public.todos_id_seq TO anon, authenticated, service_role;
+
 -- Anyone can read todos
 CREATE POLICY "Public read access" ON public.todos
     FOR SELECT TO anon USING (true);
+
+-- Demo: anon can insert simple todos (README quickstart)
+CREATE POLICY "Public insert access" ON public.todos
+    FOR INSERT TO anon WITH CHECK (true);
 
 -- Authenticated users can read their own + unassigned todos
 CREATE POLICY "Authenticated read own" ON public.todos

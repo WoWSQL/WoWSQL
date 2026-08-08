@@ -1,4 +1,5 @@
-version: "3.9"
+# WoWSQL Self-Hosted — end-user stack (pull from Docker Hub)
+# Usage: cp .env.example .env && docker compose pull && docker compose up -d
 
 services:
   # ─── PostgreSQL 18 ──────────────────────────────────────
@@ -61,11 +62,8 @@ services:
     networks:
       - wowsql
 
-  # ─── WoWSQL Auth Service (from monorepo services/) ──────
+  # ─── WoWSQL Auth ───────────────────────────────────────
   auth:
-    build:
-      context: ../../services/wowsql-auth
-      dockerfile: Dockerfile
     image: wowsql/auth:latest
     container_name: wowsql-auth
     restart: unless-stopped
@@ -91,11 +89,8 @@ services:
       retries: 5
       start_period: 15s
 
-  # ─── WoWSQL Storage Service (Postgres BYTEA, from services/) ─
+  # ─── WoWSQL Storage (Postgres BYTEA) ───────────────────
   storage:
-    build:
-      context: ../../services/wowsql-storage
-      dockerfile: Dockerfile
     image: wowsql/storage:latest
     container_name: wowsql-storage
     restart: unless-stopped
@@ -118,11 +113,8 @@ services:
       retries: 5
       start_period: 15s
 
-  # ─── WoWSQL Realtime Service (LISTEN/NOTIFY, from services/) ─
+  # ─── WoWSQL Realtime (LISTEN/NOTIFY) ───────────────────
   realtime:
-    build:
-      context: ../../services/wowsql-realtime
-      dockerfile: Dockerfile
     image: wowsql/realtime:latest
     container_name: wowsql-realtime
     restart: unless-stopped
@@ -150,9 +142,9 @@ services:
       retries: 5
       start_period: 15s
 
-  # ─── Mini Backend (Dashboard Auth Only) ─────────────────
+  # ─── Mini Backend (Dashboard Auth + DB Ops) ────────────
   backend:
-    build: ../backend
+    image: wowsql/self-backend:latest
     container_name: wowsql-backend
     restart: unless-stopped
     environment:
@@ -200,14 +192,7 @@ services:
 
   # ─── WoWSQL Studio (Dashboard) ─────────────────────────
   studio:
-    build:
-      context: ../studio
-      args:
-        NEXT_PUBLIC_API_URL: "${API_EXTERNAL_URL:-http://localhost:8080}"
-        NEXT_PUBLIC_KONG_URL: "${API_EXTERNAL_URL:-http://localhost:8080}"
-        NEXT_PUBLIC_WS_URL: "${WS_EXTERNAL_URL:-ws://localhost:8080}"
-        NEXT_PUBLIC_DASHBOARD_URL: "${STUDIO_EXTERNAL_URL:-http://localhost:3000}"
-        NEXT_PUBLIC_SELF_HOSTED: "true"
+    image: wowsql/studio:latest
     container_name: wowsql-studio
     restart: unless-stopped
     ports:
@@ -225,3 +210,4 @@ networks:
 volumes:
   db-data:
   redis-data:
+}
