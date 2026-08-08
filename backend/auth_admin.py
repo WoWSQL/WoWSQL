@@ -11,9 +11,12 @@ import smtplib
 from email.mime.text import MIMEText
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+import os
+
+from fastapi import APIRouter, Body, HTTPException, Request
 
 PROJECT_ID = "default"
+ENV_JWT_SECRET = os.getenv("JWT_SECRET", "change-me-in-production-32-chars!!")
 
 # Columns the live Studio PATCH /auth/config may send
 ALLOWED_CONFIG_FIELDS = {
@@ -281,6 +284,8 @@ def create_auth_admin_router(get_pool, get_current_user, get_api_keys) -> APIRou
         pool = get_pool()
         async with pool.acquire() as conn:
             await ensure_auth_admin_schema(conn)
+            # Cloud parity: auth is "enabled" when auth.config exists (schema provisioned).
+            # Soft-disable must not hide Studio auth UI when tables are already present.
             exists = await conn.fetchval("""
                 SELECT EXISTS(
                   SELECT 1 FROM information_schema.tables
@@ -289,12 +294,31 @@ def create_auth_admin_router(get_pool, get_current_user, get_api_keys) -> APIRou
             """)
             if not exists:
                 return {"enabled": False, "message": "Auth schema not found"}
+
             row = await _load_config_row(conn)
             if not row:
-                return {"enabled": False, "message": "Auth is not configured"}
-            enabled = row.get("auth_enabled") is not False
-            if not enabled:
-                return {"enabled": False, "message": "Authentication is disabled"}
+                # Schema/tables exist (e.g. from wowsql-auth migrations) but no config row yet
+                try:
+                    await conn.execute(
+                        """INSERT INTO auth.config (project_id, jwt_secret, auth_enabled, allow_signup, enable_signup)
+                           VALUES ($1, $2, TRUE, TRUE, TRUE)""",
+                        PROJECT_ID, ENV_JWT_SECRET[:255],
+                    )
+                except Exception:
+                    pass
+                row = await _load_config_row(conn)
+                if not row:
+                    return {"enabled": False, "message": "Auth is not configured"}
+
+            # Heal soft-disable so Studio matches cloud "schema exists" semantics
+            if row.get("auth_enabled") is False:
+                await conn.execute(
+                    """UPDATE auth.config SET auth_enabled = TRUE, updated_at = NOW()
+                       WHERE project_id = $1""",
+                    PROJECT_ID,
+                )
+                row = await _load_config_row(conn) or row
+
             anon_key, service_key = get_api_keys()
             config = _config_public(row, anon_key, service_key)
             try:
@@ -369,33 +393,47 @@ def create_auth_admin_router(get_pool, get_current_user, get_api_keys) -> APIRou
         return await patch_auth_config(slug, request, body)
 
     @router.post("/api/v1/projects/{slug}/auth/enable")
-    async def enable_auth(slug: str, request: Request, body: dict = {}):
+    async def enable_auth(slug: str, request: Request, body: dict = Body(default={})):
         get_current_user(request)
         pool = get_pool()
-        async with pool.acquire() as conn:
-            await ensure_auth_admin_schema(conn)
-            jwt_secret = (body or {}).get("jwt_secret")
-            if jwt_secret and len(jwt_secret) >= 32:
-                await conn.execute(
-                    """UPDATE auth.config SET auth_enabled = TRUE, jwt_secret = $1, updated_at = NOW()
-                       WHERE project_id = $2""",
-                    jwt_secret, PROJECT_ID,
-                )
-            else:
-                await conn.execute(
-                    """UPDATE auth.config SET auth_enabled = TRUE, updated_at = NOW()
-                       WHERE project_id = $1""",
-                    PROJECT_ID,
-                )
-            row = await _load_config_row(conn)
-            if not row:
-                secret = jwt_secret or "change-me-in-production-32-chars!!"
-                await conn.execute(
-                    """INSERT INTO auth.config (project_id, jwt_secret, auth_enabled, allow_signup, enable_signup)
-                       VALUES ($1, $2, TRUE, TRUE, TRUE)""",
-                    PROJECT_ID, secret,
-                )
-        return {"success": True, "message": "Authentication enabled", "auth_config": {"enabled": True}}
+        try:
+            async with pool.acquire() as conn:
+                await ensure_auth_admin_schema(conn)
+                jwt_secret = (body or {}).get("jwt_secret") or ENV_JWT_SECRET
+                if not isinstance(jwt_secret, str) or len(jwt_secret) < 32:
+                    jwt_secret = ENV_JWT_SECRET if len(ENV_JWT_SECRET) >= 32 else (jwt_secret or ENV_JWT_SECRET)
+                jwt_secret = str(jwt_secret)[:255]
+
+                exists = await conn.fetchval("""
+                    SELECT EXISTS(
+                      SELECT 1 FROM information_schema.tables
+                      WHERE table_schema = 'auth' AND table_name = 'config'
+                    )
+                """)
+                if not exists:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Auth schema is missing. Ensure the auth service has started at least once.",
+                    )
+
+                row = await _load_config_row(conn)
+                if row:
+                    await conn.execute(
+                        """UPDATE auth.config SET auth_enabled = TRUE, jwt_secret = $1, updated_at = NOW()
+                           WHERE project_id = $2""",
+                        jwt_secret, PROJECT_ID,
+                    )
+                else:
+                    await conn.execute(
+                        """INSERT INTO auth.config (project_id, jwt_secret, auth_enabled, allow_signup, enable_signup)
+                           VALUES ($1, $2, TRUE, TRUE, TRUE)""",
+                        PROJECT_ID, jwt_secret,
+                    )
+            return {"success": True, "message": "Authentication enabled", "auth_config": {"enabled": True}}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to enable authentication: {e}") from e
 
     @router.post("/api/v1/projects/{slug}/auth/disable")
     async def disable_auth(slug: str, request: Request):

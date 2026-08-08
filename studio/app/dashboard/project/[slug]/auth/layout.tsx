@@ -42,9 +42,12 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     if (!slug) return
     try {
       const res = await api.get(`/api/v1/projects/${slug}/auth/status`)
-      setAuthEnabled(res.data.enabled === true)
+      // Only trust an explicit false — network/401 must not trap users on Enable Auth
+      // when the auth schema is already provisioned.
+      setAuthEnabled(res.data?.enabled !== false)
     } catch {
-      setAuthEnabled(false)
+      // Self-host ships with auth; keep existing UI on transient errors instead of Enable wizard
+      setAuthEnabled((prev) => (prev === null ? true : prev))
     } finally {
       setLoading(false)
     }

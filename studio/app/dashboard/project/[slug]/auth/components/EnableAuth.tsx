@@ -48,7 +48,22 @@ export function EnableAuth({ onEnabled }: EnableAuthProps) {
         onEnabled()
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to enable authentication. Please try again.')
+      const detail = err.response?.data?.detail
+      // Idempotent: schema already present — treat as success and continue
+      if (
+        err.response?.status === 400 &&
+        typeof detail === 'string' &&
+        detail.toLowerCase().includes('already enabled')
+      ) {
+        if (onEnabled) onEnabled()
+        return
+      }
+      const message = typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: any) => d?.msg || JSON.stringify(d)).join(', ')
+          : err.message || 'Failed to enable authentication. Please try again.'
+      setError(message)
     } finally {
       setEnabling(false)
     }
