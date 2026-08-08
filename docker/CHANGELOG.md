@@ -10,6 +10,11 @@ All notable changes to the WoWSQL self-hosted setup will be documented here.
 - Synced Table Editor with main dashboard (AppSelect, FilterPanel, PostgresTypePicker, EditRowModal, column display utils)
 - Added Skeleton loading states used by the modern table editor
 
+### Real data-plane services
+
+- Auth, Storage, and Realtime now build from monorepo `services/wowsql-*` (same code as cloud)
+- Storage uses Postgres BYTEA (no filesystem volume); Realtime uses LISTEN/NOTIFY with `PG_*` env
+
 ## [1.0.0] - 2026-06-12
 
 ### Initial Release

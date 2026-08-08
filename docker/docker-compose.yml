@@ -61,17 +61,24 @@ services:
     networks:
       - wowsql
 
-  # ─── WoWSQL Auth Service ────────────────────────────────
+  # ─── WoWSQL Auth Service (from monorepo services/) ──────
   auth:
+    build:
+      context: ../../services/wowsql-auth
+      dockerfile: Dockerfile
     image: wowsql/auth:latest
     container_name: wowsql-auth
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
       JWT_SECRET: "${JWT_SECRET}"
       PROJECT_ID: "default"
-      FRONTEND_URL: "${STUDIO_EXTERNAL_URL:-http://localhost:3000}"
+      PROJECT_SLUG: "default"
+      PROJECT_URL: "${API_EXTERNAL_URL:-http://localhost:8080}"
       SHARED_MODE: "false"
+      CONNECT_DOMAIN: "localhost:8080"
+      CONNECT_PROTOCOL: "http"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     depends_on:
       db:
         condition: service_healthy
@@ -84,17 +91,21 @@ services:
       retries: 5
       start_period: 15s
 
-  # ─── WoWSQL Storage Service ─────────────────────────────
+  # ─── WoWSQL Storage Service (Postgres BYTEA, from services/) ─
   storage:
+    build:
+      context: ../../services/wowsql-storage
+      dockerfile: Dockerfile
     image: wowsql/storage:latest
     container_name: wowsql-storage
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
-      STORAGE_PATH: "/data/storage"
-      JWT_SECRET: "${JWT_SECRET}"
-    volumes:
-      - storage-data:/data/storage
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
+      PROJECT_ID: "default"
+      PROJECT_SLUG: "default"
+      SHARED_MODE: "false"
+      MAX_FILE_SIZE: "${MAX_FILE_SIZE:-52428800}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     depends_on:
       db:
         condition: service_healthy
@@ -107,19 +118,28 @@ services:
       retries: 5
       start_period: 15s
 
-  # ─── WoWSQL Realtime Service ────────────────────────────
+  # ─── WoWSQL Realtime Service (LISTEN/NOTIFY, from services/) ─
   realtime:
+    build:
+      context: ../../services/wowsql-realtime
+      dockerfile: Dockerfile
     image: wowsql/realtime:latest
     container_name: wowsql-realtime
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
-      REDIS_URL: "redis://redis:6379"
-      JWT_SECRET: "${JWT_SECRET}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
+      RAW_DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}"
+      PG_HOST: "db"
+      PG_PORT: "5432"
+      PG_USER: "${POSTGRES_USER:-postgres}"
+      PG_PASSWORD: "${POSTGRES_PASSWORD}"
+      PG_DATABASE: "${POSTGRES_DB:-postgres}"
+      PROJECT_ID: "default"
+      PROJECT_SLUG: "default"
+      SHARED_MODE: "false"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     depends_on:
       db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     networks:
       - wowsql
@@ -205,4 +225,3 @@ networks:
 volumes:
   db-data:
   redis-data:
-  storage-data:
