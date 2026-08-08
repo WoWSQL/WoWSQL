@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   Table as TableIcon, Code, Database, Shield,
-  HardDrive, Wifi, FileText, Menu, X, ChevronLeft, Radio, LogOut, Settings as SettingsIcon
+  HardDrive, FileText, Menu, X, ChevronLeft, Radio, LogOut, Settings as SettingsIcon
 } from 'lucide-react'
 import { ThemeToggle } from './ThemeToggle'
 
@@ -22,6 +22,7 @@ export function Sidebar({ projectSlug, projectName }: SidebarProps) {
   const pathname = usePathname()
 
   const isActive = (path: string) => {
+    if (!pathname) return false
     if (path.includes('/auth')) {
       return pathname.startsWith(`/dashboard/project/${projectSlug}/auth`)
     }
