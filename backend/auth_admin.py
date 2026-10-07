@@ -68,6 +68,18 @@ ALLOWED_CONFIG_FIELDS = {
     "auth_service_name",
     "email_templates",
     "auth_enabled",
+    "sms_provider",
+    "twilio_account_sid",
+    "twilio_auth_token",
+    "twilio_from_number",
+    "twilio_messaging_service_sid",
+    "fast2sms_api_key",
+    "fast2sms_sender_id",
+    "fast2sms_route",
+    "msg91_auth_key",
+    "msg91_sender_id",
+    "msg91_template_id",
+    "sms_otp_template",
 }
 
 # Maps request field → DB column
@@ -127,6 +139,18 @@ DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS mailgun_domain VARC
 DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS ses_access_key VARCHAR(255) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS ses_secret_key VARCHAR(500) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS ses_region VARCHAR(50) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS sms_provider VARCHAR(50) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS twilio_account_sid VARCHAR(255) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS twilio_auth_token VARCHAR(255) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS twilio_from_number VARCHAR(50) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS twilio_messaging_service_sid VARCHAR(255) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS fast2sms_api_key VARCHAR(255) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS fast2sms_sender_id VARCHAR(20) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS fast2sms_route VARCHAR(20) DEFAULT 'q'; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS msg91_auth_key VARCHAR(255) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS msg91_sender_id VARCHAR(20) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS msg91_template_id VARCHAR(100) DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE auth.config ADD COLUMN IF NOT EXISTS sms_otp_template TEXT DEFAULT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 -- Self-host uses project_id = 'default' (text). wowsql-auth migrations may create UUID columns.
 DO $$ BEGIN
@@ -251,6 +275,35 @@ def _config_public(row: Dict[str, Any], anon_key: str = "", service_key: str = "
         "ses_region": row.get("ses_region"),
         "email_redirect_url": row.get("email_redirect_url"),
         "email_templates": _parse_json(row.get("email_templates"), {}),
+        "sms_provider": row.get("sms_provider"),
+        "twilio_account_sid": row.get("twilio_account_sid"),
+        "twilio_from_number": row.get("twilio_from_number"),
+        "twilio_messaging_service_sid": row.get("twilio_messaging_service_sid"),
+        "twilio_auth_token_set": bool(row.get("twilio_auth_token")),
+        "fast2sms_sender_id": row.get("fast2sms_sender_id"),
+        "fast2sms_route": row.get("fast2sms_route") or "q",
+        "fast2sms_api_key_set": bool(row.get("fast2sms_api_key")),
+        "msg91_sender_id": row.get("msg91_sender_id"),
+        "msg91_template_id": row.get("msg91_template_id"),
+        "msg91_auth_key_set": bool(row.get("msg91_auth_key")),
+        "sms_otp_template": row.get("sms_otp_template"),
+        "sms_configured": bool(
+            (
+                (row.get("sms_provider") or "").lower() == "twilio"
+                and row.get("twilio_account_sid")
+                and row.get("twilio_auth_token")
+                and (row.get("twilio_from_number") or row.get("twilio_messaging_service_sid"))
+            )
+            or (
+                (row.get("sms_provider") or "").lower() == "fast2sms"
+                and row.get("fast2sms_api_key")
+            )
+            or (
+                (row.get("sms_provider") or "").lower() == "msg91"
+                and row.get("msg91_auth_key")
+                and row.get("msg91_template_id")
+            )
+        ),
         "min_password_length": row.get("min_password_length", 8),
         "max_password_length": row.get("max_password_length", 128),
         "require_uppercase": bool(row.get("require_uppercase", False)),
