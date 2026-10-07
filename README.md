@@ -24,7 +24,7 @@ This is the **self-hosted edition** of [WoWSQL](https://wowsql.com) — a Postgr
 | **Table Editor** | Browse, create, and edit tables visually |
 | **SQL Editor** | Run queries directly from the dashboard |
 | **REST API** | Auto-generated from your schema via PostgREST |
-| **Auth** | Row Level Security + user management |
+| **Auth** | Optional Row Level Security + user management |
 | **Storage** | File uploads with bucket management |
 | **Realtime** | WebSocket subscriptions for live data |
 | **API Docs** | Auto-generated documentation for your REST API |
@@ -134,7 +134,7 @@ curl http://localhost:8080/rest/v1/todos \
 | Container | Port | Purpose |
 |-----------|------|---------|
 | `wowsql-db` | 5432 | PostgreSQL 18 with extensions |
-| `wowsql-redis` | 6379 | Optional cache |
+| `wowsql-redis` | 6379 | Presence + channel broadcast across realtime replicas |
 | `wowsql-rest` | (internal) | PostgREST — auto REST API |
 | `wowsql-auth` | (internal) | Auth (`wowsql/auth`) |
 | `wowsql-storage` | (internal) | Storage (`wowsql/storage`, Postgres BYTEA) |
@@ -158,6 +158,18 @@ All configuration is in the `.env` file:
 | `STUDIO_EXTERNAL_URL` | No | Dashboard URL if behind reverse proxy |
 
 ---
+
+## Row Level Security
+
+RLS is **optional**. New tables are created without it unless you check “Row level security” in the table editor. You can enable or disable RLS later — it is never forced.
+
+The sample `todos` table ships with RLS enabled (not forced) plus demo policies. Disable it with:
+
+```sql
+ALTER TABLE public.todos DISABLE ROW LEVEL SECURITY;
+```
+
+Policies may use the bundled helpers `auth.uid()`, `auth.role()`, and `auth.jwt()`.
 
 ## Connecting with SDKs
 

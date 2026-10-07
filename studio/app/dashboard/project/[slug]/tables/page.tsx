@@ -78,7 +78,7 @@ function TablesPageContent() {
   // New table form
   const [newTableName, setNewTableName] = useState('')
   const [newTableDescription, setNewTableDescription] = useState('')
-  const [enableRLS, setEnableRLS] = useState(true)
+  const [enableRLS, setEnableRLS] = useState(false)
   const [newTableColumns, setNewTableColumns] = useState<Column[]>([
     { name: 'id', type: 'UUID', nullable: 'NO', key: 'PRI' },
     { name: 'created_at', type: 'TIMESTAMPTZ', nullable: 'NO' }
@@ -732,7 +732,7 @@ function TablesPageContent() {
       // Refresh table data to show the new table structure
       await td.loadTableData(newTable, rls.loadRLSData)
       setShowNewTableModal(false); setNewTableName(''); setNewTableDescription('')
-      setEnableRLS(true); setNewTableColumns([{ name: 'id', type: 'UUID', nullable: 'NO', key: 'PRI' }, { name: 'created_at', type: 'TIMESTAMPTZ', nullable: 'NO' }])
+      setEnableRLS(false); setNewTableColumns([{ name: 'id', type: 'UUID', nullable: 'NO', key: 'PRI' }, { name: 'created_at', type: 'TIMESTAMPTZ', nullable: 'NO' }])
       showToast(enableRLS ? 'Table created with RLS!' : 'Table created!', 'success')
     } catch (err: any) { showToast(`Error: ${err.message}`, 'error') }
     finally { td.setCreatingTable(false) }
@@ -885,7 +885,7 @@ function TablesPageContent() {
     td.setSelectedTable(tableName)
     await rls.loadRLSData(tableName)
     rls.setEditingPolicy(null)
-    rls.setNewPolicy({ policy_name: '', command: 'SELECT', using_expression: '', with_check_expression: '', roles: [] })
+    rls.setNewPolicy({ policy_name: '', command: 'SELECT', using_expression: '', with_check_expression: '', roles: ['authenticated'] })
     rls.setShowRLSPanel(true); rls.setShowRLSModal(true)
   }
 
