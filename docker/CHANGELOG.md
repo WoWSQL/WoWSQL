@@ -1,3 +1,7 @@
+## 1.2.1 — 2026-10-07
+
+- Studio: SMS / Phone OTP settings (Twilio, Fast2SMS, MSG91)
+- Self-backend: auth admin config fields for SMS providers and phone OTP
 # Changelog
 
 All notable changes to the WoWSQL self-hosted setup will be documented here.

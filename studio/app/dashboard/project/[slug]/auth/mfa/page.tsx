@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { Fingerprint, Save, RefreshCw, Smartphone, Mail, Key } from 'lucide-react'
 import api from '@/lib/api'
 import { PageSkeleton } from '@/components/Skeleton'
@@ -50,8 +51,8 @@ export default function MFAPage() {
 
   const methods = [
     { icon: Key, label: 'TOTP (Authenticator App)', desc: 'Time-based one-time passwords via apps like Google Authenticator or Authy', always: true },
-    { icon: Mail, label: 'Email OTP', desc: 'One-time passwords sent via email', key: 'email_otp_enabled' as const },
-    { icon: Smartphone, label: 'Phone OTP (SMS)', desc: 'One-time passwords sent via SMS', key: 'phone_otp_enabled' as const },
+    { icon: Mail, label: 'Email OTP', desc: 'One-time passwords sent via email (Auth → Emails)', key: 'email_otp_enabled' as const },
+    { icon: Smartphone, label: 'Phone OTP (SMS)', desc: 'Requires SMS provider under Auth → SMS', key: 'phone_otp_enabled' as const },
   ]
 
   return (
@@ -117,6 +118,16 @@ export default function MFAPage() {
           })}
         </div>
       </section>
+
+      {config.phone_otp_enabled && (
+        <p className="mb-6 text-xs text-zinc-500 dark:text-white/50">
+          Phone OTP needs Twilio, Fast2SMS, or MSG91 credentials on{' '}
+          <Link href={`/dashboard/project/${slug}/auth/sms`} className="text-blue-500 hover:underline">
+            Auth → SMS
+          </Link>
+          .
+        </p>
+      )}
 
       <div className="flex justify-end">
         <button onClick={handleSave} disabled={saving}

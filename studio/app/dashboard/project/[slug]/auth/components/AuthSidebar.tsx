@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   Users, KeyRound, Shield, Lock, Clock, Gauge, Fingerprint,
-  Link2, ShieldAlert, Webhook, ScrollText, Mail, BarChart3, AppWindow, Settings, SlidersHorizontal
+  Link2, ShieldAlert, Webhook, ScrollText, Mail, MessageSquare, BarChart3, AppWindow, Settings, SlidersHorizontal
 } from 'lucide-react'
 
 interface AuthSidebarProps {
@@ -23,6 +23,7 @@ const sections = (slug: string) => [
     label: 'NOTIFICATIONS',
     items: [
       { href: `/dashboard/project/${slug}/auth/emails`, icon: Mail, label: 'Email' },
+      { href: `/dashboard/project/${slug}/auth/sms`, icon: MessageSquare, label: 'SMS / Phone OTP' },
     ]
   },
   {
