@@ -2,6 +2,17 @@
 
 All notable changes to the WoWSQL self-hosted setup will be documented here.
 
+## [1.2.0] - 2026-10-07
+
+### Optional RLS (parity with hosted)
+
+- Create-table RLS is opt-in (checkbox off by default). ENABLE only — never FORCE.
+- Disable RLS from Studio always issues `NO FORCE` then `DISABLE`, so owners can turn it off.
+- Event trigger `wowsql_grant_api_roles` grants PostgREST roles on `CREATE TABLE` without enabling RLS.
+- Backend startup and DDL paths heal grants, drop FORCE RLS, and notify PostgREST to reload schema.
+- Studio policies accept `auth.uid()` / `auth.role()` (helpers shipped in init SQL).
+- Batch `/api/v1/db/execute` returns `{ results: [...] }` so the table editor can read RLS status.
+
 ## [1.1.0] - 2026-08-08
 
 ### Studio UI parity with cloud dashboard

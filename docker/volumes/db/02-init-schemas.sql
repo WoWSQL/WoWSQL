@@ -226,7 +226,8 @@ GRANT USAGE ON SCHEMA realtime TO postgres, anon, authenticated, service_role;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA realtime TO postgres, service_role;
 GRANT SELECT ON ALL TABLES IN SCHEMA realtime TO anon, authenticated;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
 
 DO $$ BEGIN RAISE NOTICE 'WoWSQL: All schemas initialized'; END $$;

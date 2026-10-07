@@ -46,7 +46,7 @@ SERVICE_ROLE_KEY = ""
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="WoWSQL Self-Hosted Backend", version="1.0.0")
+app = FastAPI(title="WoWSQL Self-Hosted Backend", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -87,6 +87,10 @@ async def startup():
                     await conn.execute("INSERT INTO _wowsql_api_keys (role, key) VALUES ('service_role', $1)", service_row)
                 ANON_KEY = anon_row
                 SERVICE_ROLE_KEY = service_row
+                try:
+                    await _heal_public_api_grants(conn)
+                except Exception as grant_exc:
+                    print(f"[Backend] API grant heal failed (non-fatal): {grant_exc}")
             print(f"[Backend] Connected to database successfully")
             print(f"[Backend] Anon key: {ANON_KEY[:50]}...")
             print(f"[Backend] Service key: {SERVICE_ROLE_KEY[:50]}...")
@@ -129,6 +133,173 @@ async def _ensure_admin_table():
             """, JWT_SECRET)
         except Exception:
             pass
+
+
+_DDL_KEYWORDS = (
+    "CREATE TABLE",
+    "ALTER TABLE",
+    "DROP TABLE",
+    "CREATE INDEX",
+    "DROP INDEX",
+    "CREATE VIEW",
+    "DROP VIEW",
+    "CREATE SEQUENCE",
+    "DROP SEQUENCE",
+)
+
+
+async def _heal_public_api_grants(conn) -> None:
+    """Match hosted grant heal: API roles get DML, RLS is never FORCE'd.
+
+    Skips ``_wowsql_*`` control tables. Existing volumes never re-run init SQL,
+    so this also installs the CREATE TABLE event trigger on every boot.
+    """
+    await conn.execute("""
+        GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role
+    """)
+    await conn.execute("GRANT CREATE ON SCHEMA public TO service_role")
+    await conn.execute("REVOKE CREATE ON SCHEMA public FROM anon, authenticated")
+    await conn.execute("""
+        DO $$
+        DECLARE r record;
+        BEGIN
+          FOR r IN
+            SELECT c.relname AS table_name
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND left(c.relname, 8) <> '_wowsql_'
+          LOOP
+            EXECUTE format(
+              'GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO anon, authenticated',
+              r.table_name
+            );
+            EXECUTE format('GRANT ALL ON public.%I TO service_role', r.table_name);
+          END LOOP;
+          FOR r IN
+            SELECT c.relname AS seq_name
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'S'
+              AND left(c.relname, 8) <> '_wowsql_'
+          LOOP
+            EXECUTE format(
+              'GRANT USAGE, SELECT ON SEQUENCE public.%I TO anon, authenticated, service_role',
+              r.seq_name
+            );
+          END LOOP;
+        END $$;
+    """)
+    await conn.execute("""
+        DO $$
+        DECLARE r record;
+        BEGIN
+          FOR r IN
+            SELECT c.relname AS table_name
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND left(c.relname, 8) = '_wowsql_'
+          LOOP
+            EXECUTE format(
+              'REVOKE ALL ON public.%I FROM anon, authenticated, service_role',
+              r.table_name
+            );
+          END LOOP;
+        END $$;
+    """)
+    await conn.execute("""
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+          GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated
+    """)
+    await conn.execute("""
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+          GRANT ALL ON TABLES TO service_role
+    """)
+    await conn.execute("""
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+          GRANT USAGE, SELECT ON SEQUENCES TO anon, authenticated, service_role
+    """)
+    # Drop FORCE so owners can DISABLE RLS. Never ENABLE/FORCE here.
+    await conn.execute("""
+        DO $$
+        DECLARE r record;
+        BEGIN
+          FOR r IN
+            SELECT n.nspname AS schema_name, c.relname AS table_name
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND c.relforcerowsecurity
+          LOOP
+            EXECUTE format(
+              'ALTER TABLE %I.%I NO FORCE ROW LEVEL SECURITY',
+              r.schema_name, r.table_name
+            );
+          END LOOP;
+        END $$;
+    """)
+    await _ensure_api_grant_event_trigger(conn)
+
+
+async def _ensure_api_grant_event_trigger(conn) -> None:
+    """Grants only on CREATE TABLE/SEQUENCE — never ENABLE or FORCE RLS."""
+    await conn.execute("""
+        CREATE OR REPLACE FUNCTION public.wowsql_grant_api_roles()
+        RETURNS event_trigger
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = public
+        AS $fn$
+        DECLARE
+          obj record;
+        BEGIN
+          FOR obj IN
+            SELECT object_type, object_identity, schema_name
+            FROM pg_event_trigger_ddl_commands()
+            WHERE command_tag IN ('CREATE TABLE', 'CREATE TABLE AS', 'CREATE SEQUENCE')
+          LOOP
+            IF obj.schema_name IS DISTINCT FROM 'public' THEN
+              CONTINUE;
+            END IF;
+            IF position('_wowsql_' in obj.object_identity) > 0 THEN
+              CONTINUE;
+            END IF;
+            BEGIN
+              IF obj.object_type = 'table' THEN
+                EXECUTE format(
+                  'GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO anon, authenticated',
+                  obj.object_identity
+                );
+                EXECUTE format(
+                  'GRANT ALL ON %s TO service_role',
+                  obj.object_identity
+                );
+              ELSIF obj.object_type = 'sequence' THEN
+                EXECUTE format(
+                  'GRANT USAGE, SELECT ON %s TO anon, authenticated, service_role',
+                  obj.object_identity
+                );
+              END IF;
+            EXCEPTION WHEN OTHERS THEN
+              RAISE WARNING 'wowsql_grant_api_roles failed for %: %',
+                obj.object_identity, SQLERRM;
+            END;
+          END LOOP;
+        END;
+        $fn$;
+    """)
+    await conn.execute("DROP EVENT TRIGGER IF EXISTS wowsql_grant_api_roles_trg")
+    await conn.execute("""
+        CREATE EVENT TRIGGER wowsql_grant_api_roles_trg
+        ON ddl_command_end
+        WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'CREATE SEQUENCE')
+        EXECUTE FUNCTION public.wowsql_grant_api_roles()
+    """)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -504,7 +675,8 @@ async def execute_sql(body: ExecuteRequest, request: Request):
             try:
                 # Set search path
                 if body.schema_name and body.schema_name != "public":
-                    await conn.execute(f'SET search_path TO "{body.schema_name}", public')
+                    schema_ident = body.schema_name.replace('"', '""')
+                    await conn.execute(f'SET search_path TO "{schema_ident}", public')
                 else:
                     await conn.execute('SET search_path TO public')
 
@@ -519,9 +691,11 @@ async def execute_sql(body: ExecuteRequest, request: Request):
                     columns = list(data[0].keys()) if data else []
                     results.append({
                         "success": True,
+                        "type": "select",
                         "data": data,
                         "columns": columns,
                         "rowCount": len(data),
+                        "row_count": len(data),
                         "command": "SELECT",
                     })
                 else:
@@ -533,9 +707,12 @@ async def execute_sql(body: ExecuteRequest, request: Request):
                             row_count = int(parts[-1])
                     results.append({
                         "success": True,
+                        "type": "mutation",
                         "data": [],
                         "columns": [],
                         "rowCount": row_count,
+                        "row_count": row_count,
+                        "rows_affected": row_count,
                         "command": status.split()[0] if status else "OK",
                     })
             except Exception as e:
@@ -545,11 +722,32 @@ async def execute_sql(body: ExecuteRequest, request: Request):
                     "data": [],
                     "columns": [],
                     "rowCount": 0,
+                    "row_count": 0,
                 })
+
+        has_ddl = any(
+            any(kw in q.strip().upper() for kw in _DDL_KEYWORDS)
+            for q in queries
+            if q and q.strip()
+        )
+        if has_ddl:
+            try:
+                await _heal_public_api_grants(conn)
+            except Exception as grant_exc:
+                print(f"[Backend] db/execute: api role grants failed (non-fatal): {grant_exc}")
+            try:
+                await conn.execute("SELECT pg_notify('pgrst', 'reload schema')")
+            except Exception as notify_exc:
+                print(f"[Backend] db/execute: NOTIFY pgrst failed (non-fatal): {notify_exc}")
 
     if len(results) == 1:
         return results[0]
-    return results
+    return {
+        "success": all(r.get("success", False) for r in results),
+        "type": "batch",
+        "queries_executed": len(results),
+        "results": results,
+    }
 
 
 @app.delete("/api/v1/db/tables/{table_name}")
@@ -557,7 +755,13 @@ async def drop_table(table_name: str, request: Request, schema: str = "public", 
     _get_current_user(request)
     cascade_sql = "CASCADE" if cascade else ""
     async with pool.acquire() as conn:
-        await conn.execute(f'DROP TABLE "{schema}"."{table_name}" {cascade_sql}')
+        schema_ident = schema.replace('"', '""')
+        table_ident = table_name.replace('"', '""')
+        await conn.execute(f'DROP TABLE "{schema_ident}"."{table_ident}" {cascade_sql}')
+        try:
+            await conn.execute("SELECT pg_notify('pgrst', 'reload schema')")
+        except Exception:
+            pass
     return {"message": f"Table {table_name} dropped"}
 
 

@@ -157,7 +157,7 @@ export function CreateTableModal(props: CreateTableModalProps) {
                 Row level security
               </span>
               <span className="mt-1 block text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-                When enabled, create an access policy before data is readable through the API.
+                Optional. Leave unchecked to create the table without RLS. You can enable or disable it later — RLS is never forced.
               </span>
             </span>
           </label>

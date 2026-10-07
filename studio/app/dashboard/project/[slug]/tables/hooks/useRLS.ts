@@ -4,6 +4,61 @@ import type { RLSPolicy, EditingPolicy, NewPolicy } from '../types'
 
 type ToastType = 'success' | 'error' | 'info' | 'warning'
 
+const GRANTABLE_ROLES = ['authenticated', 'anon', 'service_role'] as const
+const DEFAULT_POLICY_ROLES = ['authenticated']
+
+function quoteIdent(name: string): string {
+  return `"${String(name).replace(/"/g, '""')}"`
+}
+
+function normalizeRoles(roles: unknown): string[] {
+  if (Array.isArray(roles)) return roles.map(String).map((r) => r.trim()).filter(Boolean)
+  if (typeof roles === 'string') {
+    return roles.replace(/[{}]/g, '').split(',').map((s) => s.trim()).filter(Boolean)
+  }
+  return []
+}
+
+function grantableRoles(roles: string[]): string[] {
+  return roles
+    .map((r) => r.trim().toLowerCase())
+    .filter((r) => (GRANTABLE_ROLES as readonly string[]).includes(r))
+}
+
+function privilegesForCommand(command: string): string {
+  switch (command.toUpperCase()) {
+    case 'SELECT': return 'SELECT'
+    case 'INSERT': return 'INSERT'
+    case 'UPDATE': return 'UPDATE'
+    case 'DELETE': return 'DELETE'
+    default: return 'SELECT, INSERT, UPDATE, DELETE'
+  }
+}
+
+/** GRANT only this table, only grantable roles — never PUBLIC, never ALL TABLES. */
+function tableGrantSql(schema: string, table: string, command: string, roles: string[]): string | null {
+  const targets = grantableRoles(roles)
+  if (!targets.length) return null
+  const qualified = `${quoteIdent(schema)}.${quoteIdent(table)}`
+  return `GRANT ${privilegesForCommand(command)} ON TABLE ${qualified} TO ${targets.map(quoteIdent).join(', ')}`
+}
+
+function emptyPolicy(): NewPolicy {
+  return {
+    policy_name: '',
+    command: 'SELECT',
+    using_expression: '',
+    with_check_expression: '',
+    roles: [...DEFAULT_POLICY_ROLES],
+  }
+}
+
+function executeResults(payload: any): any[] {
+  if (Array.isArray(payload?.results)) return payload.results
+  if (Array.isArray(payload)) return payload
+  return []
+}
+
 export function useRLS(
   slug: string,
   showToast: (msg: string, type?: ToastType) => void,
@@ -15,40 +70,35 @@ export function useRLS(
   const [showRLSModal, setShowRLSModal] = useState(false)
   const [showRLSPanel, setShowRLSPanel] = useState(false)
   const [editingPolicy, setEditingPolicy] = useState<EditingPolicy | null>(null)
-  const [newPolicy, setNewPolicy] = useState<NewPolicy>({
-    policy_name: '', command: 'SELECT',
-    using_expression: '', with_check_expression: '', roles: []
-  })
+  const [newPolicy, setNewPolicy] = useState<NewPolicy>(emptyPolicy)
 
   const loadRLSData = useCallback(async (tableName: string) => {
     if (!tableName) return
     setLoadingRLS(true)
     try {
-      // Batch all queries into a single request
       const escapedTableName = tableName.replace(/'/g, "''")
+      const escapedSchema = selectedSchema.replace(/'/g, "''")
       const batchQueries = [
         `SELECT current_schema() as schema_name`,
-        `SELECT c.relname as tablename, c.relrowsecurity as rowsecurity, n.nspname as schema
+        `SELECT c.relname as tablename, c.relrowsecurity as rowsecurity,
+                c.relforcerowsecurity as forcerowsecurity, n.nspname as schema
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE c.relname = '${escapedTableName}' AND c.relkind = 'r'
-         ORDER BY CASE WHEN n.nspname = 'public' THEN 0 ELSE 1 END LIMIT 1`,
+           AND n.nspname = '${escapedSchema}'
+         LIMIT 1`,
         `SELECT schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check
-         FROM pg_policies WHERE tablename = '${escapedTableName}'
-         ORDER BY CASE WHEN schemaname = 'public' THEN 0 ELSE 1 END, schemaname, policyname`
+         FROM pg_policies
+         WHERE tablename = '${escapedTableName}' AND schemaname = '${escapedSchema}'
+         ORDER BY policyname`
       ]
 
       try {
         const batchResponse = await api.post('/api/v1/db/execute',
           { queries: batchQueries, schema: selectedSchema }, { headers: { 'X-Project-Slug': slug } }
         )
-        
-        const results = batchResponse.data.results || []
+
+        const results = executeResults(batchResponse.data)
         if (results.length >= 3) {
-          // Get schema
-          const schemaResult = results[0]
-          const currentSchema = schemaResult.data?.[0]?.schema_name || 'public'
-          
-          // Get RLS status
           const rlsResult = results[1]
           let rlsStatus = false
           if (rlsResult.data && rlsResult.data.length > 0) {
@@ -56,28 +106,17 @@ export function useRLS(
             rlsStatus = v === true || v === 't' || v === 'true' || v === 1
           }
           setRlsEnabled(rlsStatus)
-          
-          // Get policies
+
           const policiesResult = results[2]
           const policies = (policiesResult.data || []).map((row: any) => ({
             schema: row.schemaname || '', table: row.tablename || '',
             policy_name: row.policyname || '', permissive: row.permissive || '',
-            roles: row.roles || [], command: row.cmd || '',
+            roles: normalizeRoles(row.roles), command: row.cmd || '',
             using_expression: row.qual || null, with_check_expression: row.with_check || null
           }))
           setRlsPolicies(policies)
           return
         }
-      } catch {}
-
-      // Fallback to API endpoint if batch fails
-      try {
-        const dbDetailsResponse = await api.get(`/api/v1/projects/${slug}/database-details`,
-          { headers: { 'X-Project-Slug': slug } }
-        )
-        const dbDetails = dbDetailsResponse.data
-        setRlsPolicies(dbDetails.row_level_security?.policies?.filter((p: any) => p.table === tableName) || [])
-        setRlsEnabled(dbDetails.row_level_security?.enabled_tables?.some((t: any) => t.table === tableName) || false)
       } catch {}
     } finally {
       setLoadingRLS(false)
@@ -86,11 +125,15 @@ export function useRLS(
 
   const toggleRLS = async (enable: boolean, selectedTable: string) => {
     if (!selectedTable) return
+    const qualified = `${quoteIdent(selectedSchema)}.${quoteIdent(selectedTable)}`
     try {
-      const query = enable
-        ? `ALTER TABLE "${selectedTable}" ENABLE ROW LEVEL SECURITY`
-        : `ALTER TABLE "${selectedTable}" DISABLE ROW LEVEL SECURITY`
-      await api.post('/api/v1/db/execute', { query, schema: selectedSchema }, { headers: { 'X-Project-Slug': slug } })
+      const queries = enable
+        ? [`ALTER TABLE ${qualified} ENABLE ROW LEVEL SECURITY`]
+        : [
+            `ALTER TABLE ${qualified} NO FORCE ROW LEVEL SECURITY`,
+            `ALTER TABLE ${qualified} DISABLE ROW LEVEL SECURITY`,
+          ]
+      await api.post('/api/v1/db/execute', { queries, schema: selectedSchema }, { headers: { 'X-Project-Slug': slug } })
       setRlsEnabled(enable)
       showToast(`RLS ${enable ? 'enabled' : 'disabled'} successfully`, 'success')
       await new Promise(resolve => setTimeout(resolve, 500))
@@ -108,37 +151,33 @@ export function useRLS(
     }
     const usingExpr = newPolicy.using_expression.trim()
     const withCheckExpr = newPolicy.with_check_expression.trim()
-    if (usingExpr && (usingExpr.includes('auth.uid()') || usingExpr.includes('auth.role()'))) {
-      showToast('Error: auth.uid() and auth.role() are wowsql-specific. Use current_setting() instead.', 'error')
-      return
-    }
-    if (withCheckExpr && (withCheckExpr.includes('auth.uid()') || withCheckExpr.includes('auth.role()'))) {
-      showToast('Error: auth.uid() and auth.role() are wowsql-specific. Use current_setting() instead.', 'error')
-      return
-    }
     try {
       const existingPolicy = rlsPolicies.find(p => p.policy_name === newPolicy.policy_name.trim())
       if (existingPolicy) {
         showToast(`Policy "${newPolicy.policy_name}" already exists.`, 'warning')
         return
       }
-      // Batch DROP and CREATE POLICY operations
-      let createQuery = `CREATE POLICY "${newPolicy.policy_name}" ON "${selectedTable}" FOR ${newPolicy.command}`
-      if (newPolicy.roles.length > 0) createQuery += ` TO ${newPolicy.roles.map((r: string) => `"${r}"`).join(', ')}`
+      const roles = grantableRoles(newPolicy.roles).length
+        ? grantableRoles(newPolicy.roles)
+        : [...DEFAULT_POLICY_ROLES]
+      let createQuery = `CREATE POLICY ${quoteIdent(newPolicy.policy_name)} ON ${quoteIdent(selectedSchema)}.${quoteIdent(selectedTable)} FOR ${newPolicy.command}`
+      createQuery += ` TO ${roles.map(quoteIdent).join(', ')}`
       createQuery += usingExpr ? ` USING (${usingExpr})` : ` USING (true)`
       if ((newPolicy.command === 'INSERT' || newPolicy.command === 'UPDATE' || newPolicy.command === 'ALL') && withCheckExpr) {
         createQuery += ` WITH CHECK (${withCheckExpr})`
       }
-      
-      await api.post('/api/v1/db/execute', { 
+      const grantSql = tableGrantSql(selectedSchema, selectedTable, newPolicy.command, roles)
+
+      await api.post('/api/v1/db/execute', {
         queries: [
-          `DROP POLICY IF EXISTS "${newPolicy.policy_name}" ON "${selectedTable}"`,
-          createQuery
+          `DROP POLICY IF EXISTS ${quoteIdent(newPolicy.policy_name)} ON ${quoteIdent(selectedSchema)}.${quoteIdent(selectedTable)}`,
+          createQuery,
+          ...(grantSql ? [grantSql] : []),
         ],
         schema: selectedSchema
       }, { headers: { 'X-Project-Slug': slug } })
       await loadRLSData(selectedTable)
-      setNewPolicy({ policy_name: '', command: 'SELECT', using_expression: '', with_check_expression: '', roles: [] })
+      setNewPolicy(emptyPolicy())
       setShowRLSPanel(false)
       showToast('RLS policy created successfully', 'success')
     } catch (err: any) {
@@ -146,8 +185,6 @@ export function useRLS(
       if (errorDetail.includes('already exists') || errorDetail.includes('DuplicateObjectError')) {
         showToast(`Policy "${newPolicy.policy_name}" already exists.`, 'error')
         await loadRLSData(selectedTable)
-      } else if (errorDetail.includes('schema "auth" does not exist')) {
-        showToast('Error: Cannot use auth.uid() or auth.role(). Use current_setting() instead.', 'error')
       } else {
         showToast(`Error creating policy: ${errorDetail}`, 'error')
       }
@@ -160,31 +197,27 @@ export function useRLS(
     const newPolicyName = editingPolicy.policy_name.trim()
     const usingExpr = editingPolicy.using_expression.trim()
     const withCheckExpr = editingPolicy.with_check_expression.trim()
-    if (usingExpr && (usingExpr.includes('auth.uid()') || usingExpr.includes('auth.role()'))) {
-      showToast('Error: auth.uid() and auth.role() are wowsql-specific. Use current_setting() instead.', 'error')
-      return
-    }
-    if (withCheckExpr && (withCheckExpr.includes('auth.uid()') || withCheckExpr.includes('auth.role()'))) {
-      showToast('Error: auth.uid() and auth.role() are wowsql-specific. Use current_setting() instead.', 'error')
-      return
-    }
     try {
       if (newPolicyName !== originalPolicyName) {
         const nameExists = rlsPolicies.some(p => p.policy_name === newPolicyName && p.policy_name !== originalPolicyName)
         if (nameExists) { showToast(`Policy "${newPolicyName}" already exists.`, 'warning'); return }
       }
-      // Batch DROP and CREATE POLICY operations
-      let createQuery = `CREATE POLICY "${newPolicyName}" ON "${selectedTable}" FOR ${editingPolicy.command}`
-      if (editingPolicy.roles.length > 0) createQuery += ` TO ${editingPolicy.roles.map((r: string) => `"${r}"`).join(', ')}`
+      const roles = grantableRoles(editingPolicy.roles).length
+        ? grantableRoles(editingPolicy.roles)
+        : [...DEFAULT_POLICY_ROLES]
+      let createQuery = `CREATE POLICY ${quoteIdent(newPolicyName)} ON ${quoteIdent(selectedSchema)}.${quoteIdent(selectedTable)} FOR ${editingPolicy.command}`
+      createQuery += ` TO ${roles.map(quoteIdent).join(', ')}`
       createQuery += usingExpr ? ` USING (${usingExpr})` : ` USING (true)`
       if ((editingPolicy.command === 'INSERT' || editingPolicy.command === 'UPDATE' || editingPolicy.command === 'ALL') && withCheckExpr) {
         createQuery += ` WITH CHECK (${withCheckExpr})`
       }
-      
-      await api.post('/api/v1/db/execute', { 
+      const grantSql = tableGrantSql(selectedSchema, selectedTable, editingPolicy.command, roles)
+
+      await api.post('/api/v1/db/execute', {
         queries: [
-          `DROP POLICY IF EXISTS "${originalPolicyName}" ON "${selectedTable}"`,
-          createQuery
+          `DROP POLICY IF EXISTS ${quoteIdent(originalPolicyName)} ON ${quoteIdent(selectedSchema)}.${quoteIdent(selectedTable)}`,
+          createQuery,
+          ...(grantSql ? [grantSql] : []),
         ],
         schema: selectedSchema
       }, { headers: { 'X-Project-Slug': slug } })
@@ -206,7 +239,7 @@ export function useRLS(
     if (!selectedTable) return
     try {
       await api.post('/api/v1/db/execute',
-        { query: `DROP POLICY IF EXISTS "${policyName}" ON "${selectedTable}"`, schema: selectedSchema },
+        { query: `DROP POLICY IF EXISTS ${quoteIdent(policyName)} ON ${quoteIdent(selectedSchema)}.${quoteIdent(selectedTable)}`, schema: selectedSchema },
         { headers: { 'X-Project-Slug': slug } }
       )
       await loadRLSData(selectedTable)
@@ -226,35 +259,35 @@ export function useRLS(
     const hasOrgId = columns.some((c: any) => c.name.toLowerCase().includes('org_id') || c.name.toLowerCase().includes('organization_id'))
 
     if (hasUserId) suggestions.push({
-      name: 'User-based access', description: 'Allow users to access only their own rows.',
-      using: `current_setting('app.current_user_id', true)::uuid = user_id`,
-      with_check: `current_setting('app.current_user_id', true)::uuid = user_id`, command: 'ALL'
+      name: 'User-based access', description: 'Allow users to access only their own rows via auth.uid().',
+      using: `user_id = auth.uid()`,
+      with_check: `user_id = auth.uid()`, command: 'ALL'
     })
     if (hasTenantId) suggestions.push({
-      name: 'Tenant isolation', description: 'Multi-tenant data isolation using session variables',
+      name: 'Tenant isolation', description: 'Multi-tenant isolation using a session variable.',
       using: `tenant_id = current_setting('app.current_tenant_id', true)::uuid`,
       with_check: `tenant_id = current_setting('app.current_tenant_id', true)::uuid`, command: 'ALL'
     })
     if (hasOrgId) suggestions.push({
       name: 'Organization-based access', description: 'Users can access data from their organization.',
-      using: `org_id IN (SELECT org_id FROM user_organizations WHERE user_id = current_setting('app.current_user_id', true)::uuid)`,
-      with_check: `org_id IN (SELECT org_id FROM user_organizations WHERE user_id = current_setting('app.current_user_id', true)::uuid)`, command: 'ALL'
+      using: `org_id IN (SELECT org_id FROM user_organizations WHERE user_id = auth.uid())`,
+      with_check: `org_id IN (SELECT org_id FROM user_organizations WHERE user_id = auth.uid())`, command: 'ALL'
     })
     suggestions.push({
       name: 'Public read access', description: 'Allow anyone to read all rows',
       using: 'true', with_check: '', command: 'SELECT'
     })
     suggestions.push({
-      name: 'Authenticated users only', description: 'Only allow authenticated users.',
-      using: `current_setting('app.current_user_id', true) IS NOT NULL`,
-      with_check: `current_setting('app.current_user_id', true) IS NOT NULL`, command: 'ALL'
+      name: 'Authenticated users only', description: 'Only allow the authenticated role.',
+      using: `auth.role() = 'authenticated'`,
+      with_check: `auth.role() = 'authenticated'`, command: 'ALL'
     })
     if (hasCreatedBy || hasUserId) {
       const ownerColumn = hasCreatedBy ? 'created_by' : 'user_id'
       suggestions.push({
         name: 'Owner-based access', description: `Users can only access rows they own (based on ${ownerColumn})`,
-        using: `${ownerColumn} = current_setting('app.current_user_id', true)::uuid`,
-        with_check: `${ownerColumn} = current_setting('app.current_user_id', true)::uuid`, command: 'ALL'
+        using: `${ownerColumn} = auth.uid()`,
+        with_check: `${ownerColumn} = auth.uid()`, command: 'ALL'
       })
     }
     return suggestions

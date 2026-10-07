@@ -34,10 +34,13 @@ RETURNS JSONB AS $$
 $$ LANGUAGE SQL STABLE;
 
 -- ══════════════════════════════════════════════════════════
--- EXAMPLE: Sample "todos" table with RLS enabled
+-- EXAMPLE: Sample "todos" table with optional RLS
 -- ══════════════════════════════════════════════════════════
--- This demonstrates how RLS works with WoWSQL roles.
--- Delete this section if you don't need it.
+-- RLS is opt-in. New tables are NOT forced into RLS.
+-- This demo table enables (does not FORCE) RLS so policies apply
+-- to anon/authenticated. You can DISABLE RLS from Studio or SQL:
+--   ALTER TABLE public.todos DISABLE ROW LEVEL SECURITY;
+-- Delete this section if you don't need the sample table.
 
 CREATE TABLE IF NOT EXISTS public.todos (
     id          SERIAL PRIMARY KEY,
@@ -48,6 +51,7 @@ CREATE TABLE IF NOT EXISTS public.todos (
 );
 
 ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.todos NO FORCE ROW LEVEL SECURITY;
 
 -- Table + sequence grants (PostgREST roles)
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.todos TO anon, authenticated, service_role;

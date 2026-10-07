@@ -67,7 +67,9 @@ export function RLSModal(props: RLSModalProps) {
                       : <span className="px-2 py-0.5 bg-orange-500/20 text-orange-400 text-xs font-medium rounded">Disabled</span>}
                   </div>
                   <p className="text-xs text-zinc-600 dark:text-white/60">
-                    {rlsEnabled ? 'RLS is active. Users can only access rows allowed by policies.' : 'RLS is disabled. All users can access all rows. Enable RLS to restrict access.'}
+                    {rlsEnabled
+                      ? 'RLS is active. API roles can only access rows allowed by policies. You can disable it at any time.'
+                      : 'RLS is off. Roles with table grants can access all rows. Enable it when you want policies to apply.'}
                   </p>
                 </div>
                 <Button onClick={() => onToggleRLS(!rlsEnabled)}
@@ -151,8 +153,8 @@ export function RLSModal(props: RLSModalProps) {
                   <div className="flex items-start gap-2">
                     <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0 mt-0.5"><span className="text-blue-400 text-xs font-bold">i</span></div>
                     <div className="flex-1">
-                      <p className="text-xs font-medium text-blue-300 mb-1">Using Session Variables</p>
-                      <p className="text-xs text-zinc-600 dark:text-white/60">These suggestions use PostgreSQL session variables (e.g., <code className="text-blue-300 font-mono">current_setting('app.current_user_id')</code>). Set these before queries using: <code className="text-blue-300 font-mono">SET app.current_user_id = 'user-uuid'</code></p>
+                      <p className="text-xs font-medium text-blue-300 mb-1">auth.uid() helpers</p>
+                      <p className="text-xs text-zinc-600 dark:text-white/60">Self-hosted Postgres includes <code className="text-blue-300 font-mono">auth.uid()</code>, <code className="text-blue-300 font-mono">auth.role()</code>, and <code className="text-blue-300 font-mono">auth.jwt()</code>. Use them in policies the same way as hosted WoWSQL.</p>
                     </div>
                   </div>
                 </div>
@@ -191,8 +193,6 @@ function PolicyEditorPanel({ editingPolicy, setEditingPolicy, newPolicy, setNewP
   const usingExpr = editingPolicy?.using_expression || newPolicy.using_expression
   const withCheckExpr = editingPolicy?.with_check_expression || newPolicy.with_check_expression
   const command = editingPolicy?.command || newPolicy.command
-  const hasAuthWarning = (expr: string) => expr.includes('auth.uid()') || expr.includes('auth.role()')
-
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
@@ -229,18 +229,16 @@ function PolicyEditorPanel({ editingPolicy, setEditingPolicy, newPolicy, setNewP
           <div>
             <label className="block text-xs font-medium text-zinc-600 dark:text-white/70 mb-2">USING Expression <span className="text-red-400">*</span></label>
             <textarea value={usingExpr} onChange={(e) => editingPolicy ? setEditingPolicy({ ...editingPolicy, using_expression: e.target.value }) : setNewPolicy({ ...newPolicy, using_expression: e.target.value })}
-              className={`w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border rounded-md text-foreground text-sm placeholder:text-zinc-500 dark:text-white/40 focus:outline-none font-mono ${hasAuthWarning(usingExpr) ? 'border-red-500/50' : 'border-zinc-300 dark:border-white/20 focus:border-zinc-300 dark:border-white/10'}`}
-              placeholder="e.g., current_setting('app.current_user_id', true)::uuid = user_id" rows={3} />
-            {hasAuthWarning(usingExpr) && <div className="mt-2 bg-red-500/10 border border-red-500/30 rounded-md p-2"><p className="text-xs text-red-400">auth.uid() and auth.role() are wowsql-specific. Use current_setting() instead.</p></div>}
+              className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border rounded-md text-foreground text-sm placeholder:text-zinc-500 dark:text-white/40 focus:outline-none font-mono border-zinc-300 dark:border-white/20 focus:border-zinc-300 dark:border-white/10"
+              placeholder="e.g., user_id = auth.uid()" rows={3} />
             <p className="text-xs text-zinc-600 dark:text-white/50 mt-1">Expression that determines which rows can be accessed.</p>
           </div>
           {(command === 'INSERT' || command === 'UPDATE' || command === 'ALL') && (
             <div>
               <label className="block text-xs font-medium text-zinc-600 dark:text-white/70 mb-2">WITH CHECK Expression <span className="text-zinc-600 dark:text-white/40 text-xs">(Optional)</span></label>
               <textarea value={withCheckExpr} onChange={(e) => editingPolicy ? setEditingPolicy({ ...editingPolicy, with_check_expression: e.target.value }) : setNewPolicy({ ...newPolicy, with_check_expression: e.target.value })}
-                className={`w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border rounded-md text-foreground text-sm placeholder:text-zinc-500 dark:text-white/40 focus:outline-none font-mono ${hasAuthWarning(withCheckExpr) ? 'border-red-500/50' : 'border-zinc-300 dark:border-white/20 focus:border-zinc-300 dark:border-white/10'}`}
-                placeholder="e.g., current_setting('app.current_user_id', true)::uuid = user_id" rows={3} />
-              {hasAuthWarning(withCheckExpr) && <div className="mt-2 bg-red-500/10 border border-red-500/30 rounded-md p-2"><p className="text-xs text-red-400">auth.uid() and auth.role() are wowsql-specific. Use current_setting() instead.</p></div>}
+                className="w-full px-3 py-2 bg-zinc-100 dark:bg-white/5 border rounded-md text-foreground text-sm placeholder:text-zinc-500 dark:text-white/40 focus:outline-none font-mono border-zinc-300 dark:border-white/20 focus:border-zinc-300 dark:border-white/10"
+                placeholder="e.g., user_id = auth.uid()" rows={3} />
               <p className="text-xs text-zinc-600 dark:text-white/50 mt-1">Expression that validates rows being inserted or updated.</p>
             </div>
           )}
