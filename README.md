@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://wowsql.com/logo/wowbaselogo.png" alt="WoWSQL" width="400" />
+  <img src="https://wowsql.com/logo/wowbaselogo.png" alt="VelClaWSQL" width="400" />
 </p>
 
-<h1 align="center">WoWSQL — Self-Hosted</h1>
+<h1 align="center">VelClaWSQL — Self-Hosted</h1>
 
 <p align="center">
   Run your own PostgreSQL backend with a full REST API, Auth, Storage, Realtime, and a beautiful Dashboard — all in one <code>docker compose up</code>.
@@ -17,7 +17,7 @@
 
 ## What is this?
 
-This is the **self-hosted edition** of [WoWSQL](https://wowsql.com) — a Postgres-centric backend-as-a-service. It gives you:
+This is the **VelClaWSQL self-hosted edition**, based on the WoWSQL PostgreSQL backend-as-a-service architecture. It provides:
 
 | Feature | Description |
 |---------|------------|
@@ -142,6 +142,25 @@ curl http://localhost:8080/rest/v1/todos \
 | `wowsql-backend` | (internal) | Dashboard API (`wowsql/self-backend`) |
 | `wowsql-kong` | 8080 | API gateway (single entry point) |
 | `wowsql-studio` | 3000 | Dashboard UI |
+
+---
+
+## VelclawHost deployment integration
+
+VelClaWSQL can be connected to the VelclawHost control plane for repository validation and deployment orchestration. The two systems have separate responsibilities:
+
+- **VelclawHost**: source validation, deployment queue, runtime orchestration, domain binding, and hosting control plane.
+- **VelClaWSQL**: dashboard plus the PostgreSQL/Auth/REST/Storage/Realtime stack defined in `docker/docker-compose.yml`.
+
+### Current deployment prerequisites
+
+1. Connect this repository (`https://github.com/zskbot/VelClaWSQL`) to VelclawHost using the authenticated developer/repository workflow.
+2. Configure a real runtime executor on VelclawHost (`DEPLOYMENT_EXECUTOR=remote` with a reachable runtime worker, or `DEPLOYMENT_EXECUTOR=docker` on a host with Docker). A control-plane-only deployment can validate a repository but does not run the application.
+3. Deploy the database/API stack separately and set the Studio `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_KONG_URL`, `NEXT_PUBLIC_WS_URL`, and `NEXT_PUBLIC_DASHBOARD_URL` to reachable HTTPS endpoints before building the Studio image. Do not point production clients at `localhost`.
+4. Keep database passwords, JWT secrets, VelclawHost API tokens, and runtime credentials in the hosting platform's secret/environment settings; never commit them to Git.
+5. Verify the deployed dashboard and API health endpoints before switching any production domain.
+
+**Safety note:** this repository does not yet contain a root-level deployment Dockerfile for the Studio, and the existing Render workspace has a VelclawHost service but no VelClaWSQL service. No deployment was triggered by this documentation update. Do not assume the database/API stack is hosted just because the dashboard container starts.
 
 ---
 

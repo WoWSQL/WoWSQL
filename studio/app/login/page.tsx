@@ -80,7 +80,7 @@ export default function LoginPage() {
               <Database className="w-10 h-10 text-white" />
             </div>
           </div>
-          <h1 className="text-4xl font-bold text-white mb-4">WoWSQL</h1>
+          <h1 className="text-4xl font-bold text-white mb-4">VelClaW<span className="text-blue-400">SQL</span></h1>
           <p className="text-xl text-zinc-300 mb-2">Self-Hosted Edition</p>
           <p className="text-zinc-500 text-sm max-w-sm mx-auto">
             Your own PostgreSQL backend with REST API, Auth, Storage, and Realtime — running entirely on your machine.
@@ -182,7 +182,7 @@ export default function LoginPage() {
 
           <div className="mt-8 pt-6 border-t border-zinc-800">
             <div className="text-center text-zinc-500 text-xs space-y-1">
-              <p>WoWSQL Self-Hosted Edition</p>
+              <p>VelClaWSQL Self-Hosted Edition</p>
               <p>All data stays on your machine. No cloud connection.</p>
             </div>
           </div>

@@ -1,7 +1,7 @@
 {
-  "name": "WowSQL - PostgreSQL Backend Platform",
-  "short_name": "WowSQL",
-  "description": "PostgreSQL Backend-as-a-Service with auth, realtime, storage, and auto-generated REST APIs",
+  "name": "VelClaWSQL - PostgreSQL Backend Platform",
+  "short_name": "VelClaWSQL",
+  "description": "Modern PostgreSQL backend with authentication, realtime, storage, and auto-generated REST APIs",
   "icons": [
     {
       "src": "/android-chrome-192x192.png",
@@ -21,8 +21,8 @@
       "type": "image/png"
     }
   ],
-  "theme_color": "#667eea",
-  "background_color": "#0f172a",
+  "theme_color": "#3B82F6",
+  "background_color": "#09090B",
   "display": "standalone",
   "orientation": "portrait-primary",
   "start_url": "/",
@@ -35,7 +35,7 @@
     {
       "name": "Dashboard",
       "short_name": "Dashboard",
-      "description": "Go to WowSQL Dashboard",
+      "description": "Go to VelClaWSQL Dashboard",
       "url": "/dashboard",
       "icons": [{ "src": "/android-chrome-192x192.png", "sizes": "192x192" }]
     },

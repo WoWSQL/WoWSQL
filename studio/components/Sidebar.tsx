@@ -84,7 +84,7 @@ export function Sidebar({ projectSlug, projectName }: SidebarProps) {
               <Database className="w-4 h-4 flex-shrink-0 text-blue-500" />
               {isExpanded && (
                 <span className="text-sm ml-2 whitespace-nowrap font-medium text-zinc-900 dark:text-white">
-                  WoWSQL
+                  VelClaWSQL
                 </span>
               )}
             </div>

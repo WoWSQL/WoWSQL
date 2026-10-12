@@ -3,14 +3,33 @@
 
 const cleanUrl = (url: string) => url.replace(/\/$/, '')
 
-// All traffic goes through Kong gateway (both auth and data operations)
-export const API_URL = cleanUrl(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080')
+function configuredUrl(name: string, developmentFallback: string): string {
+  const value = process.env[name]?.trim()
+  if (!value) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(`${name} must be configured for production; localhost fallback is disabled.`)
+    }
+    return developmentFallback
+  }
 
-// Kong gateway (same as API_URL for self-hosted — single entry point)
-export const KONG_URL = cleanUrl(process.env.NEXT_PUBLIC_KONG_URL || 'http://localhost:8080')
+  const parsed = new URL(value)
+  const localHost = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)$/i.test(parsed.hostname)
+  const allowedProtocol = name === 'NEXT_PUBLIC_WS_URL'
+    ? ['wss:']
+    : ['https:']
 
-export const WS_URL = cleanUrl(process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080')
-export const DASHBOARD_URL = cleanUrl(process.env.NEXT_PUBLIC_DASHBOARD_URL || 'http://localhost:3000')
+  if (process.env.NODE_ENV === 'production' && (localHost || !allowedProtocol.includes(parsed.protocol))) {
+    throw new Error(`${name} must use a public ${allowedProtocol.join('/')} URL in production.`)
+  }
+
+  return cleanUrl(value)
+}
+
+// Public API origin. Production builds must supply real reachable URLs.
+export const API_URL = configuredUrl('NEXT_PUBLIC_API_URL', 'http://localhost:8080')
+export const KONG_URL = configuredUrl('NEXT_PUBLIC_KONG_URL', 'http://localhost:8080')
+export const WS_URL = configuredUrl('NEXT_PUBLIC_WS_URL', 'ws://localhost:8080')
+export const DASHBOARD_URL = configuredUrl('NEXT_PUBLIC_DASHBOARD_URL', 'http://localhost:3000')
 export const STORAGE_URL = cleanUrl(process.env.NEXT_PUBLIC_KONG_URL || 'http://localhost:8080')
 
 // Anon key for PostgREST access through Kong

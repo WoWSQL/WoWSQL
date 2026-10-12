@@ -7,8 +7,8 @@ import { ActivityTracker } from '@/components/ActivityTracker'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'WOWSQL - PostgreSQL-powered Backend Platform',
-  description: 'PostgreSQL Backend-as-a-Service with auth, realtime, storage, and auto-generated REST APIs',
+  title: 'VelClaWSQL — PostgreSQL Backend Platform',
+  description: 'VelClaWSQL — modern PostgreSQL backend with authentication, realtime, storage, and auto-generated REST APIs.',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'WOWSQL',
+    title: 'VelClaWSQL',
   },
 }
 

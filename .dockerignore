@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+studio/node_modules
+studio/.next
+studio/out
+studio/coverage
+studio/.env
+studio/.env.*
+!studio/.env.example
+.env
+.env.*
+!.env.example
