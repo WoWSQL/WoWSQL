@@ -24,7 +24,7 @@
     "react-turnstile": "^1.1.4",
     "sharp": "^0.33.3",
     "tailwind-merge": "^2.2.0",
-    "zod": "^3.22.4",
+    "zod": "^4.6.6",
     "zustand": "^4.5.0"
   },
   "devDependencies": {
